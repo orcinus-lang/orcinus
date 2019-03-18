@@ -672,6 +672,8 @@ class StaticAnnotator(ExpressionAnnotator):
             return self.annotate_overload(node)
         elif isinstance(node, DecoratorNode):
             return self.annotate_decorator(node)
+        elif isinstance(node, PassMemberNode):
+            return None     # skip pass member
 
         self.diagnostics.error(node.location, 'Not implemented member')
         return None
