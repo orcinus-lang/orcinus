@@ -7,3 +7,4 @@ __pycache__/
 .*_cache/
 .venv/
 *.egg-info/
+.hypothesis/

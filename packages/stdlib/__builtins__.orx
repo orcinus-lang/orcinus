@@ -1,7 +1,8 @@
 
 
 struct bool:
-    pass
+    def __eq__(self, other: bool) -> bool: ...
+    def __ne__(self, other: bool) -> bool: ...
 
 
 class str:

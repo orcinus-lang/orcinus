@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections import deque as Queue
-from typing import Set, Mapping, MutableSequence
+from typing import Set, MutableSequence
 
 from orcinus.exceptions import DiagnosticError
 from orcinus.scanner import Scanner
@@ -185,9 +185,7 @@ class Parser:
             imports = self.parse_imports()
             members = self.parse_members()
             token_eof = self.consume(TokenID.EndOfFile)
-            filename = token_eof.location.filename
-            tree = SyntaxTree(
-                self.context, name=self.name, imports=imports, members=members, location=Location(filename))
+            tree = SyntaxTree(self.context, name=self.name, imports=imports, members=members, token_eof=token_eof)
             self.context.annotate(tree)
         return tree
 
@@ -367,86 +365,125 @@ class Parser:
         # function:
         #     decorators 'def' Name generic_parameters arguments [ -> type ] ':' '...'
         # """
-        self.consume(TokenID.Def)
+        token_def = self.consume(TokenID.Def)
         token_name = self.consume(TokenID.Name)
         generic_parameters = self.parse_generic_parameters()
         parameters = self.parse_function_parameters()
 
         if self.match(TokenID.Then):
-            self.consume()
+            token_then = self.consume()
             result_type = self.parse_type()
         else:
+            token_then = None
             result_type = AutoTypeNode(self.context, token_name.location)
 
-        self.consume(TokenID.Colon)
+        token_colon = self.consume(TokenID.Colon)
         statement = self.parse_function_statement()
 
-        return FunctionNode(self.context, decorators or SyntaxCollection[DecoratorNode](), token_name.value,
-                            generic_parameters, parameters, result_type, statement, token_name.location)
+        return FunctionNode(
+            self.context,
+            decorators or SyntaxCollection[DecoratorNode](),
+            token_def,
+            token_name,
+            generic_parameters,
+            parameters,
+            token_then,
+            result_type,
+            token_colon,
+            statement
+        )
 
     def parse_enum(self, decorators=None):
         # """
         # enum:
         #     "enum" Name parents ':' '\n' type_members
         # """
-        self.consume(TokenID.Enum)
+        token_enum = self.consume(TokenID.Enum)
         token_name = self.consume(TokenID.Name)
         generic_parameters = self.parse_generic_parameters()
         parents = self.parse_type_parents()
-        self.consume(TokenID.Colon)
-        self.consume(TokenID.NewLine)
+        token_colon = self.consume(TokenID.Colon)
+        token_newline = self.consume(TokenID.NewLine)
         members = self.parse_type_members()
 
-        return EnumNode(self.context, decorators or SyntaxCollection[DecoratorNode](), token_name.value,
-                        generic_parameters, parents, members, token_name.location)
+        return EnumNode(self.context,
+                        decorators or SyntaxCollection[DecoratorNode](),
+                        token_enum,
+                        token_name,
+                        generic_parameters,
+                        parents,
+                        token_colon,
+                        token_newline,
+                        members)
 
     def parse_interface(self, decorators=None):
         # """
         # interface:
         #     "interface" Name generic_parameters parents ':' '\n' type_members
         # """
-        self.consume(TokenID.Interface)
+        token_interface = self.consume(TokenID.Interface)
         token_name = self.consume(TokenID.Name)
         generic_parameters = self.parse_generic_parameters()
         parents = self.parse_type_parents()
-        self.consume(TokenID.Colon)
-        self.consume(TokenID.NewLine)
+        token_colon = self.consume(TokenID.Colon)
+        token_newline = self.consume(TokenID.NewLine)
         members = self.parse_type_members()
 
-        return InterfaceNode(self.context, decorators or SyntaxCollection[DecoratorNode](), token_name.value,
-                             generic_parameters, parents, members, token_name.location)
+        return InterfaceNode(self.context,
+                             decorators or SyntaxCollection[DecoratorNode](),
+                             token_interface,
+                             token_name,
+                             generic_parameters,
+                             parents,
+                             token_colon,
+                             token_newline,
+                             members)
 
     def parse_class(self, decorators=None):
         # """
         # class:
         #     "class" Name generic_parameters parents ':' '\n' type_members
         # """
-        self.consume(TokenID.Class)
+        token_class = self.consume(TokenID.Class)
         token_name = self.consume(TokenID.Name)
         generic_parameters = self.parse_generic_parameters()
         parents = self.parse_type_parents()
-        self.consume(TokenID.Colon)
-        self.consume(TokenID.NewLine)
+        token_colon = self.consume(TokenID.Colon)
+        token_newline = self.consume(TokenID.NewLine)
         members = self.parse_type_members()
 
-        return ClassNode(self.context, decorators or SyntaxCollection[DecoratorNode](), token_name.value,
-                         generic_parameters, parents, members, token_name.location)
+        return ClassNode(self.context,
+                         decorators or SyntaxCollection[DecoratorNode](),
+                         token_class,
+                         token_name,
+                         generic_parameters,
+                         parents,
+                         token_colon,
+                         token_newline,
+                         members)
 
     def parse_struct(self, decorators=None):
         # """
         # struct:
         #     "struct" Name generic_parameters parents ':' '\n' type_members
         # """
-        self.consume(TokenID.Struct)
+        token_struct = self.consume(TokenID.Struct)
         token_name = self.consume(TokenID.Name)
         generic_parameters = self.parse_generic_parameters()
         parents = self.parse_type_parents()
-        self.consume(TokenID.Colon)
-        self.consume(TokenID.NewLine)
+        token_colon = self.consume(TokenID.Colon)
+        token_newline = self.consume(TokenID.NewLine)
         members = self.parse_type_members()
 
-        return StructNode(self.context, decorators or SyntaxCollection[DecoratorNode](), token_name.value,
-                          generic_parameters, parents, members, token_name.location)
+        return StructNode(self.context,
+                          decorators or SyntaxCollection[DecoratorNode](),
+                          token_struct,
+                          token_name,
+                          generic_parameters,
+                          parents,
+                          token_colon,
+                          token_newline,
+                          members)
 
     def parse_named_member(self):
         # """
@@ -571,18 +608,20 @@ class Parser:
         # """
         token_name = self.consume(TokenID.Name)
         if self.match(TokenID.Colon):
-            self.consume(TokenID.Colon)
+            token_colon = self.consume(TokenID.Colon)
             param_type = self.parse_type()
         else:
+            token_colon = None
             param_type = AutoTypeNode(self.context, token_name.location)
 
         if self.match(TokenID.Equal):
-            self.consume()
+            token_equal = self.consume()
             default_value = self.parse_expression()
         else:
+            token_equal = None
             default_value = None
 
-        return ParameterNode(self.context, token_name.value, param_type, default_value, token_name.location)
+        return ParameterNode(self.context, token_name, token_colon, param_type, token_equal, default_value)
 
     def parse_type(self):
         # """
@@ -591,7 +630,7 @@ class Parser:
         #     Name '[' type_arguments ']'
         # """
         token_name = self.parse_qualified_name()
-        result_type = NamedTypeNode(self.context, token_name.value, token_name.location)
+        result_type = NamedTypeNode(self.context, token_name)
 
         while self.match(TokenID.LeftSquare):
             arguments = self.parse_generic_arguments()
@@ -637,10 +676,10 @@ class Parser:
         ]
         while self.match_any(STATEMENT_STARTS):
             statements.append(self.parse_statement())
-        self.consume(TokenID.Undent)
+        token_undent = self.consume(TokenID.Undent)
 
         # noinspection PyArgumentList
-        return BlockStatementNode(self.context, SyntaxCollection(statements), token_indent.location)
+        return BlockStatementNode(self.context, token_indent, SyntaxCollection(statements), token_undent)
 
     def parse_statement(self):
         # """
@@ -699,7 +738,7 @@ class Parser:
         self.consume(TokenID.NewLine)
 
         # noinspection PyArgumentList
-        return ReturnStatementNode(self.context, value, token_return.location)
+        return ReturnStatementNode(self.context, token_return, value)
 
     def parse_yield_statement(self):
         # """
@@ -1212,8 +1251,8 @@ class Parser:
         #     or_expression '|' xor_expression
         # """
         expression = self.parse_and_expression()
-        while self.match(TokenID.VeriticalLine):
-            token_operator = self.consume(TokenID.VeriticalLine)
+        while self.match(TokenID.VerticalLine):
+            token_operator = self.consume(TokenID.VerticalLine)
             right_operand = self.parse_and_expression()
 
             # noinspection PyArgumentList
@@ -1422,7 +1461,7 @@ class Parser:
         token_number = self.consume(TokenID.Integer)
 
         # noinspection PyArgumentList
-        return IntegerExpressionNode(self.context, int(token_number.value), token_number.location)
+        return IntegerExpressionNode(self.context, token_number)
 
     def parse_string_expression(self) -> ExpressionNode:
         # """
@@ -1442,7 +1481,7 @@ class Parser:
         token_name = self.consume(TokenID.Name)
 
         # noinspection PyArgumentList
-        return NamedExpressionNode(self.context, token_name.value, token_name.location)
+        return NamedExpressionNode(self.context, token_name)
 
     def parse_ending_expression(self, expression: ExpressionNode) -> ExpressionNode:
         # """

@@ -400,7 +400,7 @@ class Scanner:
 
         if self.current_symbol == '|':
             self.advance_symbol()
-            return TokenID.VeriticalLine
+            return TokenID.VerticalLine
 
         if self.current_symbol == '&':
             self.advance_symbol()
