@@ -20,8 +20,9 @@ from orcinus.diagnostics import DiagnosticManager, Diagnostic
 from orcinus.exceptions import OrcinusError
 from orcinus.parser import Parser
 from orcinus.scanner import Scanner
-from orcinus.semantic import SemanticModel, SemanticContext
+from orcinus.semantic import SemanticModel, SemanticContext, SyntaxTreeLoader
 from orcinus.signals import Signal
+from orcinus.symbols import Module
 from orcinus.syntax import SyntaxTree, SyntaxContext
 from orcinus.utils import cached_property
 
@@ -42,7 +43,7 @@ class Workspace:
         paths = list(() or paths)
 
         # Standard library path
-        stdlib_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../stdlib'))
+        stdlib_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../packages/stdlib'))
         if stdlib_path not in paths:
             paths.insert(0, stdlib_path)
 
@@ -64,12 +65,30 @@ class Workspace:
 
         raise OrcinusError(f"Not found file `{url.path}` in packages")
 
+    def get_package_for_module(self, name: str):
+        for package in self.packages:
+            if package.has_module(name):
+                return package
+
+        raise OrcinusError(f"Not found module `{name}` in packages")
+
     def get_or_create_document(self, doc_uri: str) -> Document:
         """
         Return a managed document if-present, else create one pointing at disk.
         """
         package = self.get_package_for_document(doc_uri)
-        return package.get_or_create_document(doc_uri)
+        return package.open_document(doc_uri)
+
+    def get_or_create_module(self, name: str) -> Document:
+        """
+        Return a managed document if-present, else create one pointing at disk.
+        """
+        package = self.get_package_for_module(name)
+        return package.open_module(name)
+
+    def get_module(self, name: str) -> Optional[Document]:
+        package = self.get_package_for_module(name)
+        return package.get_module(name)
 
     def get_document(self, doc_uri: str) -> Optional[Document]:
         """ Returns a managed document if-present, otherwise None """
@@ -101,7 +120,7 @@ class Workspace:
         for package in self.packages:
             doc_uri = convert_filename(module_name, package.path)
             try:
-                return package.get_or_create_document(doc_uri)
+                return package.open_document(doc_uri)
             except IOError:
                 logger.debug(f"Not found module `{module_name}` in file `{doc_uri}`")
                 pass  # Continue
@@ -112,10 +131,14 @@ class Workspace:
 class Package:
     """ Instance of this class is managed single package """
 
+    documents: MutableMapping[str, Document]
+    modules: MutableMapping[str, Document]
+
     def __init__(self, workspace: Workspace, path: str):
         self.__workspace = weakref.ref(workspace)
         self.path = path
-        self.documents: MutableMapping[str, Document] = {}
+        self.documents = {}
+        self.modules = {}
 
     @property
     def workspace(self) -> Workspace:
@@ -125,20 +148,41 @@ class Package:
     def name(self) -> str:
         return os.path.basename(self.path)
 
-    def get_module_name(self, filename):
+    def get_module_name(self, filename: str) -> str:
         fullname = os.path.abspath(filename)
         if fullname.startswith(self.path):
             return convert_module_name(fullname, self.path)
 
         raise OrcinusError(f"Not found file `{filename}` in packages")
 
-    # def get_filename(self, filename):
+    def get_filename(self, name: str) -> str:
+        return convert_filename(name, self.path)
 
-    def get_or_create_document(self, doc_uri: str) -> Document:
+    def has_module(self, name: str) -> bool:
+        """ Check if package contains module"""
+        if name in self.modules:
+            return True
+
+        filename = self.get_filename(name)
+        try:
+            with open(filename, 'r'):
+                return True
+        except IOError:
+            return False
+
+    def open_module(self, name: str) -> Document:
+        """ Return a managed document with module if-present, else create one pointing at disk. """
+        return self.get_module(name) or self.create_document(self.get_filename(name))
+
+    def open_document(self, doc_uri: str) -> Document:
         """
-        Return a managed document if-present, else create one pointing at disk.
+        Return a managed document with filename if-present, else create one pointing at disk.
         """
         return self.get_document(doc_uri) or self.create_document(doc_uri)
+
+    def get_module(self, name: str) -> Optional[Document]:
+        """ Returns a managed document if-present, otherwise None """
+        return self.modules.get(name)
 
     def get_document(self, doc_uri: str) -> Optional[Document]:
         """ Returns a managed document if-present, otherwise None """
@@ -154,6 +198,7 @@ class Package:
                 source = stream.read()
         document = Document(self, doc_uri, name=name, source=source, version=version)
         self.documents[doc_uri] = document
+        self.modules[name] = document
         self.workspace.on_document_create(document=document)
         return document
 
@@ -169,6 +214,7 @@ class Package:
         try:
             document = self.documents[doc_uri]
             del self.documents[doc_uri]
+            del self.modules[document.name]
         except KeyError:
             pass
         else:
@@ -227,8 +273,8 @@ class Document:
     @source.setter
     def source(self, value: str):
         """ Change source of document """
-        self.__source = value
         self.invalidate()
+        self.__source = value
 
     @property
     def diagnostics(self) -> DiagnosticManager:
@@ -241,8 +287,8 @@ class Document:
         if not self.__tree:
             context = SyntaxContext(self.diagnostics)
             stream = io.StringIO(self.source)
-            scanner = Scanner(self.uri, diagnostics=self.diagnostics)
-            parser = Parser(scanner, context)
+            scanner = Scanner(self.uri, stream, diagnostics=self.diagnostics)
+            parser = Parser(self.name, scanner, context)
             self.__tree = parser.parse()
         return self.__tree
 
@@ -251,8 +297,8 @@ class Document:
         """ Returns semantic model """
         if not self.__model:
             try:
-                context = SemanticContext(self.workspace, diagnostics=self.diagnostics)
-                self.__model = context.open(self)
+                context = SemanticContext(SemanticLoader(self.workspace), diagnostics=self.diagnostics)
+                self.__model = context.open(self.name)
             except Diagnostic as ex:
                 self.diagnostics.add(ex.location, ex.severity, ex.message, ex.source)
             finally:
@@ -281,12 +327,29 @@ class Document:
         return f'<{class_name}: {self}>'
 
 
+class SemanticLoader(SyntaxTreeLoader):
+    def __init__(self, workspace: Workspace):
+        self.__workspace = weakref.ref(workspace)
+
+    @property
+    def workspace(self) -> Workspace:
+        return self.__workspace()
+
+    def load(self, filename: str) -> SyntaxTree:
+        document = self.workspace.get_document(filename)
+        return document.tree
+
+    def open(self, name: str) -> SyntaxTree:
+        document = self.workspace.get_module(name)
+        return document.tree
+
+
 def convert_module_name(filename, path):
     fullname = os.path.abspath(filename)
     if not fullname.startswith(path):
         raise OrcinusError(f"Not found file `{filename}` in package `{path}`")
 
-    module_name = fullname[len(path):]
+    module_name = os.path.relpath(filename, path)
     module_name, _ = os.path.splitext(module_name)
     module_name = module_name.strip(os.path.sep)
     module_name = module_name.replace(os.path.sep, '.')

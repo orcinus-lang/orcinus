@@ -32,6 +32,8 @@ NEW_NAME = '__new__'
 
 
 class ModuleLoader(abc.ABC):
+    """ This loader interface is used for load modules """
+
     @abc.abstractmethod
     def open(self, name: str) -> Module:
         raise RuntimeError

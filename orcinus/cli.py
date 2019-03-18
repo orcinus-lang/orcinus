@@ -23,13 +23,11 @@ def log_diagnostics(diagnostics: DiagnosticManager):
 
 
 def main():
-    workspace = Workspace([
-        os.path.join(os.path.dirname(__file__), 'packages/stdlib'),
-        os.getcwd()
-    ])
+    workspace = Workspace([os.getcwd()])
 
-    builtins = workspace.get_or_create_document('packages/stdlib/__builtins__.orx')
+    builtins = workspace.get_or_create_module('__builtins__')
     tree = builtins.tree
+    module = builtins.module
     breakpoint()
 
 

@@ -6,12 +6,8 @@ from __future__ import annotations
 
 import heapq
 import logging
-import os
 from typing import MutableMapping, Tuple, Mapping
 
-from orcinus.diagnostics import DiagnosticError
-from orcinus.parser import Parser
-from orcinus.scanner import Scanner
 from orcinus.symbols import *
 from orcinus.syntax import *
 from orcinus.utils import cached_property
@@ -36,72 +32,42 @@ class SemanticModuleLoader(ModuleLoader):
         return model.module
 
 
+class SyntaxTreeLoader(abc.ABC):
+    """ This loader interface is used for load syntax tree """
+
+    @abc.abstractmethod
+    def load(self, filename: str) -> SyntaxTree:
+        """ Load syntax tree by filename """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def open(self, name: str) -> SyntaxTree:
+        """ Load syntax tree by module name"""
+        raise NotImplementedError
+
+
 class SemanticContext:
-    def __init__(self, paths=None, *, diagnostics: DiagnosticManager = None):
+    def __init__(self, loader: SyntaxTreeLoader, *, diagnostics: DiagnosticManager = None):
         self.diagnostics = diagnostics if diagnostics is not None else DiagnosticManager()
         self.symbol_context = SymbolContext(SemanticModuleLoader(self), diagnostics=self.diagnostics)
         self.syntax_context = SyntaxContext(self.diagnostics)
 
-        self.paths = []
-        self.paths.append(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'packages/stdlib'))
-        self.paths.extend(paths)
-        self.paths.append(os.path.join(os.getcwd()))
-
+        self.__loader = loader
         self.__models = {}
         self.__filenames = {}
 
-    @staticmethod
-    def get_module_name(path, filename) -> Optional[str]:
-        """ Find module name for filename """
-        module_name, _ = os.path.splitext(os.path.relpath(filename, path))
-        module_name = module_name.strip('/')
-        module_name = module_name.replace(os.path.sep, '.')
-        return module_name
-
-    def load(self, filename: str, name: str = None) -> SemanticModel:
+    def load(self, filename: str) -> SemanticModel:
         """
         Open file with module
 
         :param filename: relative path to module source file
         :param name:     module name
         """
-        # iterate over paths
-        for path in self.paths:
-            # check, if file already opened
-            fullname = os.path.join(path, filename)
-            if fullname in self.__filenames:
-                return self.__filenames[fullname]
+        if filename in self.__filenames:
+            return self.__filenames[filename]
 
-            # try open file from path
-            name = self.get_module_name(path, fullname)
-            model = self.__try_open_file(fullname, name)
-            if model:
-                self.__models[name] = model
-                self.__filenames[fullname] = model
-                model.analyze()
-                model.emit()
-                return model
-
-        paths = '\n  - ' + ('\n  - '.join(map(str, self.paths)))
-        raise DiagnosticError(Location(filename), f"Not found module ’{name}’ from ’{filename}’ in: {paths}")
-
-    def __try_open_file(self, fullname: str, name: str):
-        """
-        This method is used for attempt to load AST module from file and create
-        semantic model for him.
-        """
-        try:
-            with Scanner(fullname) as scanner:
-                logger.debug(f"Load module ’{name}’ from file ’{fullname}’")
-
-                parser = Parser(scanner, self.syntax_context)
-                tree = parser.parse()
-        except IOError:
-            logger.debug(f"Module ’{name}’ not found file ’{fullname}’")
-            return None
-        else:
-            # Create semantic model
-            return SemanticModel(self, tree, name)
+        tree = self.__loader.load(filename)
+        return self.__register(tree)
 
     def open(self, name: str) -> SemanticModel:
         """
@@ -110,17 +76,22 @@ class SemanticContext:
         if name in self.__models:
             return self.__models[name]
 
-        filename = name.replace('.', os.path.sep) + '.orx'
-        return self.load(filename, name)
+        tree = self.__loader.open(name)
+        return self.__register(tree)
+
+    def __register(self, tree: SyntaxTree) -> SemanticModel:
+        model = SemanticModel(self, tree)
+        self.__models[tree.name] = model
+        self.__models[tree.filename] = model
+        return model
 
 
 class SemanticModel:
     tree: SyntaxTree
 
-    def __init__(self, context: SemanticContext, tree: SyntaxTree, name: str):
+    def __init__(self, context: SemanticContext, tree: SyntaxTree):
         self.context = context
         self.tree = tree
-        self.name = name
         self.imports = {}
 
         annotator = StaticAnnotator(self)
@@ -706,7 +677,7 @@ class StaticAnnotator(ExpressionAnnotator):
         return None
 
     def annotate_module(self, node: SyntaxTree) -> SemanticModule:
-        module = Module(self.symbol_context, self.model.name, node.location)
+        module = Module(self.symbol_context, node.name, node.location)
         return SemanticModule(self.model, module)
 
     def annotate_decorator(self, node: DecoratorNode) -> SemanticAttribute:

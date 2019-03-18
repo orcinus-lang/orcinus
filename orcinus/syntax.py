@@ -315,15 +315,21 @@ class SyntaxCollection(Sequence[T]):
 
 
 class SyntaxTree(SyntaxNode):
+    name: str
     imports: SyntaxCollection[ImportNode]
     members: SyntaxCollection[MemberNode]
 
-    def __init__(self, context: SyntaxContext, imports: SyntaxCollection[ImportNode],
+    def __init__(self, context: SyntaxContext, name: str, imports: SyntaxCollection[ImportNode],
                  members: SyntaxCollection[MemberNode], location: Location):
         super(SyntaxTree, self).__init__(context, location)
 
+        self.name = name
         self.members = members
         self.imports = imports
+
+    @property
+    def filename(self) -> str:
+        return self.location.filename
 
     @property
     def children(self) -> Sequence[SyntaxNode]:

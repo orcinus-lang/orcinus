@@ -103,7 +103,8 @@ COMPARISON_IDS: Mapping[TokenID, CompareID] = {
 
 
 class Parser:
-    def __init__(self, scanner: Scanner, context: SyntaxContext):
+    def __init__(self, name: str, scanner: Scanner, context: SyntaxContext):
+        self.name = name
         self.context = context
         self.scanner = scanner
         self.current_token = self.scanner.consume_token()
@@ -185,7 +186,8 @@ class Parser:
             members = self.parse_members()
             token_eof = self.consume(TokenID.EndOfFile)
             filename = token_eof.location.filename
-            tree = SyntaxTree(self.context, imports=imports, members=members, location=Location(filename))
+            tree = SyntaxTree(
+                self.context, name=self.name, imports=imports, members=members, location=Location(filename))
             self.context.annotate(tree)
         return tree
 
