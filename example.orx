@@ -1,0 +1,18 @@
+from system.io import TextIO, StringIO
+
+from orcinus.locations import Location
+
+
+class Scanner:
+    stream: TextIO
+
+    character: Optional[char]
+    value: StringIO
+    location: Location
+
+    def __init__(self, filename: str, stream: TextIO):
+        self.stream = stream
+        self.location = Location(filename)
+        self.character = stream.read_char()
+        self.value = StringIO()
+
