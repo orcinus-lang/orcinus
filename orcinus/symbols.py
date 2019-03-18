@@ -122,7 +122,7 @@ class NamedSymbol(Symbol, abc.ABC):
         return self.name
 
 
-class OwnedSymbol(NamedSymbol, abc.ABC):
+class Child(NamedSymbol, abc.ABC):
     """ Abstract base for all owned symbols """
 
     @property
@@ -134,7 +134,7 @@ class OwnedSymbol(NamedSymbol, abc.ABC):
     def module(self) -> Module:
         if isinstance(self.owner, Module):
             return cast(Module, self.owner)
-        return cast(OwnedSymbol, self.owner).module
+        return cast(Child, self.owner).module
 
     @property
     def context(self) -> SymbolContext:
@@ -149,10 +149,10 @@ class ContainerSymbol(Symbol, abc.ABC):
         self.on_add_member = Signal()
 
     @property
-    def members(self) -> Sequence[OwnedSymbol]:
+    def members(self) -> Sequence[Child]:
         return self.__members
 
-    def add_member(self, symbol: OwnedSymbol):
+    def add_member(self, symbol: Child):
         if symbol in self.__members:
             return
 
@@ -283,17 +283,17 @@ class Module(NamedSymbol, ContainerSymbol):
     def types(self) -> Sequence[Type]:
         return self.__types
 
-    def add_function(self, func: Function):
-        self.__functions.append(func)
+    def add_function(self, member: Function):
+        self.__functions.append(member)
 
-    def add_type(self, type: Type):
-        self.__types.append(type)
+    def add_type(self, member: Type):
+        self.__types.append(member)
 
     def add_dependency(self, module: Module):
         self.__dependencies.append(module)
 
 
-class GenericSymbol(OwnedSymbol, abc.ABC):
+class GenericSymbol(Child, abc.ABC):
     @property
     def is_generic(self) -> bool:
         if self.generic_parameters:
@@ -470,9 +470,9 @@ class Type(GenericSymbol, ContainerSymbol, abc.ABC):
         for attr in self.attributes:
             self.add_attribute(attr)
         for parent in self.definition.parents:
-            self.add_parent(builder.instantiate(parent, location))
+            self.add_parent(cast(Type, builder.instantiate(parent, location)))
         for member in self.definition.members:
-            self.add_member(builder.instantiate(member, location))
+            self.add_member(cast(Child, builder.instantiate(member, location)))
         self.build()
 
     def __hash__(self):
@@ -607,14 +607,14 @@ class FunctionType(Type):
         return f"({parameters}) -> {self.return_type}"
 
 
-class Property(OwnedSymbol):
-    def __init__(self, owner: Type, name: str, getter: Function = None, settet: Function = None, *, location: Location):
+class Property(Child):
+    def __init__(self, owner: Type, name: str, getter: Function = None, setter: Function = None, *, location: Location):
         self.__owner = owner
         self.__name = name
         self.__type = type
         self.__location = location
         self.__getter = getter
-        self.__setter = None
+        self.__setter = setter
 
     @property
     def owner(self) -> Type:
@@ -640,7 +640,7 @@ class Property(OwnedSymbol):
     def setter(self) -> Optional[Function]:
         return self.__setter
 
-    @getter.setter
+    @setter.setter
     def setter(self, value: Optional[Function]):
         self.__setter = value
 
@@ -649,12 +649,12 @@ class Property(OwnedSymbol):
         return self.__location
 
 
-class Field(OwnedSymbol):
-    def __init__(self, owner: Type, name: str, type: Type, location: Location):
+class Field(Child):
+    def __init__(self, owner: Type, name: str, field_type: Type, location: Location):
         assert isinstance(owner, (ClassType, StructType))
         self.__owner = owner
         self.__name = name
-        self.__type = type
+        self.__type = field_type
         self.__location = location
 
     @property
@@ -674,7 +674,7 @@ class Field(OwnedSymbol):
         return self.__location
 
 
-class EnumValue(OwnedSymbol, Value):
+class EnumValue(Child, Value):
     def __init__(self, owner: EnumType, name: str, value: int, location: Location):
         super(EnumValue, self).__init__(owner, location)
 
@@ -710,7 +710,7 @@ class ErrorValue(Value):
         return str(self)
 
 
-class Parameter(OwnedSymbol, Value):
+class Parameter(Child, Value):
     def __init__(self, owner: Function, name: str, param_type: Type):
         super(Parameter, self).__init__(param_type, owner.location)
 
@@ -972,7 +972,7 @@ class NoneConstant(Value):
         return str(self)
 
 
-class EnumConstant(OwnedSymbol, Value):
+class EnumConstant(Child, Value):
     def __init__(self, owner: EnumType, name: str, value: Optional[int], location: Location):
         super(EnumConstant, self).__init__(owner, location)
 
@@ -1263,8 +1263,8 @@ class IRBuilder:
         self.context.diagnostics.error(location, "Type `{}` doesn't have a default values".format(value_type))
         return ErrorValue(self.module, location)
 
-    def append_basic_block(self, name: str, location: Location):
-        return self.function.append_basic_block(name, location)
+    def append_basic_block(self, name: str):
+        return self.function.append_basic_block(name)
 
     def position_at(self, block: BasicBlock):
         assert isinstance(block, BasicBlock)
@@ -1274,8 +1274,8 @@ class IRBuilder:
         self.block.append(inst)
         return inst
 
-    def alloca(self, type: Type, *, location: Location) -> Instruction:
-        return self.__append(AllocaInstruction(type, location))
+    def alloca(self, value_type: Type, *, location: Location) -> Instruction:
+        return self.__append(AllocaInstruction(value_type, location))
 
     def load(self, value: Value, *, location: Location) -> Instruction:
         return self.__append(LoadInstruction(value, location))
@@ -1321,7 +1321,7 @@ class InheritanceBuilder:
 
     def add(self, original: Symbol, instance: Symbol):
         self.mapping[original] = instance
-        self.instance.add_member(instance)
+        self.instance.add_member(cast(Child, instance))
 
     def inherit_member(self, original: Symbol) -> Symbol:
         if original in self.mapping:
@@ -1396,14 +1396,14 @@ class InstantiateBuilder:
         raise NotImplementedError
 
     def instantiate_function_type(self, original: FunctionType, location: Location) -> FunctionType:
-        parameters = [self.instantiate(param, location) for param in original.parameters]
-        return_type = self.instantiate(original.return_type, location)
+        parameters = [cast(Type, self.instantiate(param, location)) for param in original.parameters]
+        return_type = cast(Type, self.instantiate(original.return_type, location))
         instance = FunctionType(self.module, parameters, return_type, original.location)
         self.add(original, instance)
         return instance
 
     def instantiate_function(self, original: Function, location: Location) -> Symbol:
-        owner = self.instantiate(original.owner, location)
+        owner = cast(ContainerSymbol, self.instantiate(original.owner, location))
         instance_type: FunctionType = self.instantiate(original.type, location)
         instance = Function(owner, original.name, instance_type, original.location)
         for original_param, instance_param in zip(original.parameters, instance.parameters):

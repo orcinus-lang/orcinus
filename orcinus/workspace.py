@@ -289,12 +289,7 @@ class Document:
     def semantic_model(self) -> SemanticModel:
         """ Returns semantic model """
         if not self.__semantic_model:
-            try:
-                self.__semantic_model = self.semantic_context.open(self.name)
-            except Diagnostic as ex:
-                self.diagnostics.add(ex.location, ex.severity, ex.message, ex.source)
-            finally:
-                self.workspace.on_document_analyze(document=self)
+            self.__semantic_model = self.semantic_context.open(self.name)
         return self.__semantic_model
 
     @property
@@ -303,6 +298,12 @@ class Document:
         if not self.__module:
             self.__module = self.semantic_model.module if self.semantic_model else None
         return self.__module
+
+    def analyze(self) -> Module:
+        self.semantic_model.define()
+        self.semantic_model.analyze()
+        self.workspace.on_document_analyze(document=self)
+        return self.module
 
     def invalidate(self):
         """ Invalidate document, e.g. detach syntax tree or semantic model from this document """

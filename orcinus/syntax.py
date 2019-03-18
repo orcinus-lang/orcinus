@@ -8,7 +8,7 @@ import abc
 import dataclasses
 import enum
 import weakref
-from typing import Sequence, Iterator, Optional, Union, Iterable, TypeVar, Callable
+from typing import Sequence, Iterator, Optional, Union, Iterable, TypeVar, Callable, Mapping
 
 from multidict import MultiDict
 
@@ -296,6 +296,7 @@ class SyntaxNode(abc.ABC):
         return iter(self.children)
 
 
+K = TypeVar('K')
 T = TypeVar('T')
 
 
@@ -312,6 +313,20 @@ class SyntaxCollection(Sequence[T]):
 
     def __len__(self) -> int:
         return len(self.__items)
+
+
+class SyntaxDictionary(Mapping[K, T]):
+    def __init__(self, items: Mapping[K, T]):
+        self.__items = items
+
+    def __getitem__(self, k: K) -> T:
+        return self.__items[k]
+
+    def __len__(self) -> int:
+        return len(self.__items)
+
+    def __iter__(self) -> Iterator[K]:
+        return iter(self.__items)
 
 
 class SyntaxTree(SyntaxNode):
@@ -412,7 +427,7 @@ class MemberNode(SyntaxNode, abc.ABC):
     pass
 
 
-class PassMemberNode(SyntaxNode, abc.ABC):
+class PassMemberNode(MemberNode, abc.ABC):
     @property
     def children(self) -> Sequence[SyntaxNode]:
         return []
@@ -1049,14 +1064,19 @@ class LogicExpressionNode(ExpressionNode):
 
 class CallExpressionNode(ExpressionNode):
     instance: ExpressionNode
-    arguments: SyntaxCollection[ArgumentNode]
+    arguments: SyntaxCollection[ExpressionNode]
+    keywords: SyntaxDictionary[str, ExpressionNode]
 
     def __init__(self, context: SyntaxContext, instance: ExpressionNode, arguments: SyntaxCollection[ArgumentNode],
                  location: Location):
         super(CallExpressionNode, self).__init__(context, location)
 
         self.instance = instance
-        self.arguments = arguments
+        self.arguments = SyntaxCollection[ExpressionNode](
+            [arg.value for arg in arguments if isinstance(arg, PositionArgumentNode)])
+        self.keywords = SyntaxDictionary[str, ExpressionNode]({
+            arg.name: arg.value for arg in arguments if isinstance(arg, KeywordArgumentNode)
+        })
 
     @property
     def children(self) -> Sequence[SyntaxNode]:

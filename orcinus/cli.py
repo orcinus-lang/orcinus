@@ -111,7 +111,7 @@ def compile_module(filename: str):
     # initialize workspace context
     workspace = Workspace(paths=[os.getcwd()])
     document = workspace.get_or_create_document(filename)
-    module = document.module
+    module = document.analyze()
     exit_diagnostics(document.diagnostics)
 
 
