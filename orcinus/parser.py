@@ -108,6 +108,7 @@ class Parser:
         self.scanner = scanner
         self.current_token = self.scanner.consume_token()
         self.tokens = Queue()
+        self.diagnostics = context.diagnostics
 
     def match(self, index: TokenID) -> bool:
         # """
@@ -170,6 +171,8 @@ class Parser:
         else:
             required_name = next(iter(indexes), None).name
             message = "Required `{}`, but got `{}`".format(required_name, existed_name)
+
+        self.diagnostics.error(self.current_token.location, message)
         raise DiagnosticError(self.current_token.location, message)
 
     def parse(self) -> SyntaxTree:
@@ -177,12 +180,13 @@ class Parser:
         # module:
         #     imports members EOF
         # """
-        imports = self.parse_imports()
-        members = self.parse_members()
-        token_eof = self.consume(TokenID.EndOfFile)
-        filename = token_eof.location.filename
-        tree = SyntaxTree(self.context, imports=imports, members=members, location=Location(filename))
-        self.context.annotate(tree)
+        with self.scanner:
+            imports = self.parse_imports()
+            members = self.parse_members()
+            token_eof = self.consume(TokenID.EndOfFile)
+            filename = token_eof.location.filename
+            tree = SyntaxTree(self.context, imports=imports, members=members, location=Location(filename))
+            self.context.annotate(tree)
         return tree
 
     def parse_imports(self) -> SyntaxCollection[ImportNode]:

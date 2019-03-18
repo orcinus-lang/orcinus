@@ -9,6 +9,7 @@ from collections import deque as Stack
 from io import StringIO, SEEK_CUR
 from typing import TextIO
 
+from orcinus.diagnostics import DiagnosticManager
 from orcinus.locations import Location
 from orcinus.syntax import TokenID, SyntaxToken
 
@@ -22,8 +23,9 @@ class Scanner:
     is_level: bool
     is_new_line: bool
 
-    def __init__(self, filename: str):
-        self.stream = open(filename, 'r+', encoding='utf-8')
+    def __init__(self, filename: str, stream: TextIO = None, *, diagnostics: DiagnosticManager):
+        self.diagnostics = diagnostics
+        self.stream = stream or open(filename, 'r+', encoding='utf-8')
         self.is_new_line = True
         self.level = 0
         self.queue = Queue()
@@ -434,5 +436,6 @@ class Scanner:
             return self.consume_string('"')
 
         # Error:
+        self.diagnostics.error(self.__location, "Unknown symbol")
         self.advance_symbol()
         return TokenID.Error
