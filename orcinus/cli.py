@@ -4,7 +4,10 @@ from __future__ import annotations
 import logging
 import os
 
+import sys
+
 from orcinus.diagnostics import Diagnostic, DiagnosticSeverity, DiagnosticManager
+from orcinus.exceptions import OrcinusError
 from orcinus.workspace import Workspace
 
 logger = logging.getLogger('orcinus')
@@ -25,10 +28,15 @@ def log_diagnostics(diagnostics: DiagnosticManager):
 def main():
     workspace = Workspace([os.getcwd()])
 
-    builtins = workspace.get_or_create_module('__builtins__')
-    tree = builtins.tree
-    module = builtins.module
-    breakpoint()
+    try:
+        builtins = workspace.get_or_create_document(sys.argv[1])
+        tree = builtins.syntax_tree
+        module = builtins.module
+    except OrcinusError as ex:
+        sys.stderr.write(str(ex))
+        sys.exit(1)
+    else:
+        breakpoint()
 
 
 if __name__ == '__main__':

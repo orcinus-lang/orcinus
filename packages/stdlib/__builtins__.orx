@@ -1,0 +1,85 @@
+
+
+struct bool:
+    pass
+
+
+class str:
+    @native('orx_string_to_bool')
+    def __bool__(self) -> bool: ...
+
+    @native('orx_string_eq')
+    def __eq__(self, other: str) -> bool: ...
+
+    @native('orx_string_ne')
+    def __ne__(self, other: str) -> bool: ...
+
+    @native('orx_string_is_space')
+    def is_space(self) -> bool: ...
+
+    @native('orx_string_is_numeric')
+    def is_numeric(self) -> bool: ...
+
+    @native('orx_string_is_alpha')
+    def is_alpha(self) -> bool: ...
+
+    @native('orx_string_is_alnum')
+    def is_alnum(self) -> bool: ...
+
+
+struct void:
+    @native('orx_void_to_bool')
+    def __bool__(self) -> bool: ...
+
+
+struct int:
+    @native('orx_integer_to_bool')
+    def __bool__(self) -> bool: ...
+
+    @native('orx_integer_neg')
+    def __neg__(self) -> int: ...
+
+    def __pos__(self) -> int:
+        return self
+
+    @native('orx_integer_add')
+    def __add__(self, other: int) -> int: ...
+
+    @native('orx_integer_sub')
+    def __sub__(self, other: int) -> int: ...
+
+    @native('orx_integer_mul')
+    def __mul__(self, other: int) -> int: ...
+
+    @native('orx_integer_truediv')
+    def __truediv__(self, other: int) -> float: ...
+
+    @native('orx_integer_floordiv')
+    def __floordiv__(self, other: int) -> int: ...
+
+    @native('orx_integer_eq')
+    def __eq__(self, other: int) -> bool: ...
+
+    @native('orx_integer_ne')
+    def __ne__(self, other: int) -> bool: ...
+
+    @native('orx_integer_lt')
+    def __lt__(self, other: int) -> bool: ...
+
+    @native('orx_integer_le')
+    def __le__(self, other: int) -> bool: ...
+
+    @native('orx_integer_gt')
+    def __gt__(self, other: int) -> bool: ...
+
+    @native('orx_integer_ge')
+    def __ge__(self, other: int) -> bool: ...
+
+
+struct float:
+    @native('orx_float_floor')
+    def floor(self) -> int: ...
+
+    @native('orx_float_ceil')
+    def ceil(self) -> int: ...
+

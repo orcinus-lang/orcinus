@@ -110,23 +110,6 @@ class Workspace:
         package = self.get_package_for_document(doc_uri)
         return package.unload_document(doc_uri)
 
-    def load_document(self, module_name: str) -> Document:
-        """
-        Load document for module
-
-        :param module_name: Module name
-        :return: Document
-        """
-        for package in self.packages:
-            doc_uri = convert_filename(module_name, package.path)
-            try:
-                return package.open_document(doc_uri)
-            except IOError:
-                logger.debug(f"Not found module `{module_name}` in file `{doc_uri}`")
-                pass  # Continue
-
-        raise OrcinusError(f'Not found module {module_name}')
-
 
 class Package:
     """ Instance of this class is managed single package """
@@ -194,8 +177,11 @@ class Package:
         name = self.get_module_name(url.path)
 
         if source is None:
-            with open(url.path, 'r', encoding='utf-8') as stream:
-                source = stream.read()
+            try:
+                with open(url.path, 'r', encoding='utf-8') as stream:
+                    source = stream.read()
+            except IOError:
+                raise OrcinusError(f"Not found file `{url.path}` in package `{self.name}`")
         document = Document(self, doc_uri, name=name, source=source, version=version)
         self.documents[doc_uri] = document
         self.modules[name] = document
@@ -237,8 +223,8 @@ class Document:
         self.__name = name
         self.__source = source
         self.__version = version
-        self.__tree = None
-        self.__model = None
+        self.__syntax_tree = None
+        self.__semantic_model = None
         self.__module = None
 
     @property
@@ -281,43 +267,49 @@ class Document:
         """ Returns diagnostics manager for this document """
         return self.__diagnostics
 
-    @property
-    def tree(self) -> SyntaxTree:
-        """ Returns syntax tree """
-        if not self.__tree:
-            context = SyntaxContext(self.diagnostics)
-            stream = io.StringIO(self.source)
-            scanner = Scanner(self.uri, stream, diagnostics=self.diagnostics)
-            parser = Parser(self.name, scanner, context)
-            self.__tree = parser.parse()
-        return self.__tree
+    @cached_property
+    def syntax_context(self) -> SyntaxContext:
+        return SyntaxContext(self.diagnostics)
 
     @property
-    def model(self) -> SemanticModel:
+    def syntax_tree(self) -> SyntaxTree:
+        """ Returns syntax tree """
+        if not self.__syntax_tree:
+            stream = io.StringIO(self.source)
+            scanner = Scanner(self.uri, stream, diagnostics=self.diagnostics)
+            parser = Parser(self.name, scanner, self.syntax_context)
+            self.__syntax_tree = parser.parse()
+        return self.__syntax_tree
+
+    @cached_property
+    def semantic_context(self) -> SemanticContext:
+        return SemanticContext(SemanticLoader(self.workspace), diagnostics=self.diagnostics)
+
+    @property
+    def semantic_model(self) -> SemanticModel:
         """ Returns semantic model """
-        if not self.__model:
+        if not self.__semantic_model:
             try:
-                context = SemanticContext(SemanticLoader(self.workspace), diagnostics=self.diagnostics)
-                self.__model = context.open(self.name)
+                self.__semantic_model = self.semantic_context.open(self.name)
             except Diagnostic as ex:
                 self.diagnostics.add(ex.location, ex.severity, ex.message, ex.source)
             finally:
                 self.workspace.on_document_analyze(document=self)
-        return self.__model
+        return self.__semantic_model
 
     @property
     def module(self) -> Module:
         """ Return semantic module for this document """
         if not self.__module:
-            self.__module = self.model.module if self.model else None
+            self.__module = self.semantic_model.module if self.semantic_model else None
         return self.__module
 
     def invalidate(self):
         """ Invalidate document, e.g. detach syntax tree or semantic model from this document """
         self.diagnostics.clear()
         self.__module = None
-        self.__model = None
-        self.__tree = None
+        self.__semantic_model = None
+        self.__syntax_tree = None
 
     def __str__(self) -> str:
         return f'{self.package.name}::{self.name} [{self.path}]'
@@ -336,12 +328,12 @@ class SemanticLoader(SyntaxTreeLoader):
         return self.__workspace()
 
     def load(self, filename: str) -> SyntaxTree:
-        document = self.workspace.get_document(filename)
-        return document.tree
+        document = self.workspace.get_or_create_document(filename)
+        return document.syntax_tree
 
     def open(self, name: str) -> SyntaxTree:
-        document = self.workspace.get_module(name)
-        return document.tree
+        document = self.workspace.get_or_create_module(name)
+        return document.syntax_tree
 
 
 def convert_module_name(filename, path):
