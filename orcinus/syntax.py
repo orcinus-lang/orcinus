@@ -230,8 +230,8 @@ class SyntaxScope:
 
 
 class SyntaxContext:
-    def __init__(self, diagnostics: DiagnosticManager):
-        self.__diagnostics = diagnostics
+    def __init__(self, diagnostics: DiagnosticManager = None):
+        self.__diagnostics = diagnostics if diagnostics is not None else DiagnosticManager()
         self.__scopes = {}
         self.__parents = {}
 
@@ -341,7 +341,7 @@ T = TypeVar('T')
 
 class SyntaxCollection(Sequence[T]):
     def __init__(self, items: Iterable[T] = None):
-        items = tuple(items) if items else ()
+        items = tuple(filter(None, items)) if items else ()
         for item in items:
             if not isinstance(item, SyntaxNode):
                 raise RuntimeError('Collection must contains only syntax nodes')
@@ -396,12 +396,16 @@ class SyntaxTree(SyntaxNode):
 
 
 class OverloadNode(SyntaxNode):
-    def __init__(self, context: SyntaxContext, name: str, functions: SyntaxCollection[FunctionNode],
+    def __init__(self,
+                 context: SyntaxContext,
+                 name: str,
+                 functions: SyntaxCollection[FunctionNode],
                  location: Location):
-        super(OverloadNode, self).__init__(context, location)
+        super(OverloadNode, self).__init__(context)
 
         self.name = name
         self.functions = functions
+        self.__location = location
 
         assert all(isinstance(node, FunctionNode) for node in functions)
 
@@ -410,45 +414,95 @@ class OverloadNode(SyntaxNode):
         return OverloadNode(self.context, self.name, functions, self.location)
 
     @property
+    def location(self) -> Location:
+        return self.__location
+
+    @property
     def children(self) -> Sequence[SyntaxSymbol]:
         return []  # What??
 
 
 class ImportNode(SyntaxNode):
+    token_import: SyntaxToken
     aliases: SyntaxCollection[AliasNode]
+    token_newline: SyntaxToken
 
-    def __init__(self, context: SyntaxContext, aliases: SyntaxCollection[AliasNode], location: Location):
-        super(ImportNode, self).__init__(context, location)
+    def __init__(self,
+                 context: SyntaxContext,
+                 token_import: SyntaxToken,
+                 aliases: SyntaxCollection[AliasNode],
+                 token_newline: SyntaxToken
+                 ):
+        super(ImportNode, self).__init__(context)
 
+        self.token_import = token_import
         self.aliases = aliases
+        self.token_newline = token_newline
+
+    @property
+    def location(self) -> Location:
+        return self.token_import.location
 
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
-        return make_sequence([self.aliases])
+        return make_sequence([self.token_import, self.aliases, self.token_newline])
 
 
 class ImportFromNode(ImportNode):
-    module: str
+    token_from: SyntaxToken
+    token_name: SyntaxToken
 
-    def __init__(self, context: SyntaxContext, module: str, aliases: SyntaxCollection[AliasNode], location: Location):
-        super(ImportFromNode, self).__init__(context, aliases, location)
+    def __init__(self,
+                 context: SyntaxContext,
+                 token_from: SyntaxToken,
+                 token_name: SyntaxToken,
+                 token_import: SyntaxToken,
+                 aliases: SyntaxCollection[AliasNode],
+                 token_newline: SyntaxToken
+                 ):
+        super(ImportFromNode, self).__init__(context, token_import, aliases, token_newline)
 
-        self.module = module
+        self.token_from = token_from
+        self.token_name = token_name
 
+    @property
+    def module(self) -> str:
+        return self.token_name.value
 
-class AliasNode(SyntaxNode):
-    name: str
-    alias: Optional[str]
-
-    def __init__(self, context: SyntaxContext, name: str, alias: Optional[str], location: Location):
-        super(AliasNode, self).__init__(context, location)
-
-        self.name = name
-        self.alias = alias
+    @property
+    def location(self) -> Location:
+        return self.token_name.location
 
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
-        return []
+        return make_sequence([self.token_from, self.token_name, self.token_import, self.aliases, self.token_newline])
+
+
+class AliasNode(SyntaxNode):
+    token_name: SyntaxToken
+    token_alias: Optional[SyntaxToken]
+
+    def __init__(self, context: SyntaxContext, token_name: SyntaxToken, token_alias: Optional[SyntaxToken]):
+        super(AliasNode, self).__init__(context)
+
+        self.token_name = token_name
+        self.token_alias = token_alias
+
+    @property
+    def location(self) -> Location:
+        return self.token_name.location
+
+    @property
+    def name(self) -> str:
+        return self.token_name.value
+
+    @property
+    def alias(self) -> Optional[str]:
+        return self.token_alias and self.token_alias.name
+
+    @property
+    def children(self) -> Sequence[SyntaxSymbol]:
+        return make_sequence([self.token_name, self.token_alias])
 
 
 class DecoratorNode(SyntaxNode):
@@ -472,9 +526,20 @@ class MemberNode(SyntaxNode, abc.ABC):
 
 
 class PassMemberNode(MemberNode, abc.ABC):
+    token_pass: SyntaxToken
+
+    def __init__(self, context: SyntaxContext, token_pass: SyntaxToken):
+        super().__init__(context)
+
+        self.token_pass = token_pass
+
+    @property
+    def location(self) -> Location:
+        return self.token_pass.location
+
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
-        return []
+        return [self.token_pass]
 
 
 class ParameterNode(SyntaxNode):
@@ -516,6 +581,9 @@ class ParameterNode(SyntaxNode):
             self.token_equal,
             self.default_value
         ])
+
+    def __str__(self):
+        return f'{self.name}: {self.type}'
 
 
 class EnumMemberNode(MemberNode):
@@ -787,6 +855,9 @@ class AutoTypeNode(TypeNode):
     def children(self) -> Sequence[SyntaxSymbol]:
         return [self.token_auto]
 
+    def __str__(self) -> str:
+        return 'auto'
+
 
 class NamedTypeNode(TypeNode):
     token_name: SyntaxToken
@@ -808,6 +879,9 @@ class NamedTypeNode(TypeNode):
     def children(self) -> Sequence[SyntaxSymbol]:
         return [self.token_name]
 
+    def __str__(self) -> str:
+        return self.name
+
 
 class GenericParameterNode(TypeNode):
     name: str
@@ -820,6 +894,9 @@ class GenericParameterNode(TypeNode):
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
         return []
+
+    def __str__(self) -> str:
+        return self.name
 
 
 class ParameterizedTypeNode(TypeNode):
@@ -836,6 +913,10 @@ class ParameterizedTypeNode(TypeNode):
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
         return make_sequence([self.type, self.arguments])
+
+    def __str__(self) -> str:
+        arguments = ', '.join(self.arguments)
+        return f'{self.type}[{arguments}]'
 
 
 class StatementNode(SyntaxNode, abc.ABC):
@@ -901,20 +982,26 @@ class ReturnStatementNode(StatementNode):
 
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
-        return make_sequence([self.value])
+        return make_sequence([self.token_return, self.value])
 
 
 class YieldStatementNode(StatementNode):
+    token_yield: SyntaxToken
     value: Optional[ExpressionNode]
 
-    def __init__(self, context: SyntaxContext, value: Optional[ExpressionNode], location: Location):
-        super(YieldStatementNode, self).__init__(context, location)
+    def __init__(self, context: SyntaxContext, token_yield: SyntaxToken, value: Optional[ExpressionNode]):
+        super(YieldStatementNode, self).__init__(context)
 
+        self.token_yield = token_yield
         self.value = value
 
     @property
+    def location(self) -> Location:
+        yield self.token_yield.location
+
+    @property
     def children(self) -> Sequence[SyntaxSymbol]:
-        return make_sequence([self.value])
+        return make_sequence([self.token_yield, self.value])
 
 
 class AssignStatementNode(StatementNode):
@@ -1097,10 +1184,14 @@ class WithStatementNode(StatementNode):
 class ExpressionStatementNode(StatementNode):
     value: ExpressionNode
 
-    def __init__(self, context: SyntaxContext, value: ExpressionNode, location: Location):
-        super(ExpressionStatementNode, self).__init__(context, location)
+    def __init__(self, context: SyntaxContext, value: ExpressionNode):
+        super(ExpressionStatementNode, self).__init__(context)
 
         self.value = value
+
+    @property
+    def location(self) -> Location:
+        return self.value.location
 
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
@@ -1133,16 +1224,24 @@ class IntegerExpressionNode(ExpressionNode):
 
 
 class StringExpressionNode(ExpressionNode):
-    value: str
+    token_string: SyntaxToken
 
-    def __init__(self, context: SyntaxContext, value: str, location: Location):
-        super(StringExpressionNode, self).__init__(context, location)
+    def __init__(self, context: SyntaxContext, token_string: SyntaxToken):
+        super(StringExpressionNode, self).__init__(context)
 
-        self.value = value
+        self.token_string = token_string
+
+    @property
+    def location(self) -> Location:
+        return self.token_string.location
+
+    @property
+    def value(self) -> str:
+        return self.token_string.value[1:-1]
 
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
-        return []
+        return [self.token_string]
 
 
 class NamedExpressionNode(ExpressionNode):

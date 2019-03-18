@@ -9,6 +9,7 @@ import logging
 from typing import Deque
 from typing import MutableMapping, Tuple
 
+from orcinus.exceptions import OrcinusError
 from orcinus.symbols import *
 from orcinus.syntax import *
 from orcinus.utils import cached_property
@@ -84,7 +85,7 @@ class SemanticContext:
         model = SemanticModel(self, tree)
         self.__models[tree.name] = model
         self.__models[tree.filename] = model
-        model.define()
+        model.analyze()
         return model
 
 
@@ -96,6 +97,7 @@ class SemanticModel:
         self.tree = tree
         self.imports = {}
         self.queue = Deque[SyntaxNode]()
+        self.is_analyzed = False
 
         annotator = StaticAnnotator(self)
         self.symbols = SemanticScope(self, constructor=lambda n: annotator.annotate(n))
@@ -139,14 +141,29 @@ class SemanticModel:
 
         for node in self.tree.imports:
             if isinstance(node, ImportFromNode):
-                module = self.context.open(node.module).module
+                # Attempt to open module
+                try:
+                    module = self.context.open(node.module).module
+                except OrcinusError as ex:
+                    self.diagnostics.error(node.location, str(ex))
+                    continue
+
+                # Load aliases from nodes
                 for alias in node.aliases:  # type: AliasNode
                     if not self.import_symbol(module, alias.name, alias.alias):
                         self.diagnostics.error(node.location, f'Cannot import name ‘{alias.name}’ from ‘{module.name}’')
             else:
                 self.diagnostics.error(node.location, 'Not implemented member')
 
-    def define(self):
+    def emit_function(self, node: FunctionNode):
+        annotator = FunctionAnnotator(self, self.symbols, node)
+        annotator.annotate_statement(node.statement)
+
+    def analyze(self):
+        if self.is_analyzed:
+            return
+        self.is_analyzed = True
+
         self.import_symbols()
 
         self.queue.append(self.tree)
@@ -155,11 +172,6 @@ class SemanticModel:
             node = self.queue.popleft()
             self.initialize(node)
 
-    def emit_function(self, node: FunctionNode):
-        annotator = FunctionAnnotator(self, self.symbols, node)
-        annotator.annotate_statement(node.statement)
-
-    def analyze(self):
         functions: Sequence[FunctionNode] = list(
             self.tree.find_descendants(lambda node: isinstance(node, FunctionNode))
         )
@@ -389,7 +401,7 @@ class ExpressionAnnotator(SemanticAnnotator):
         return IntegerConstant(self.symbol_context, int(node.value), location=node.location)
 
     def annotate_string_expression(self, node: StringExpressionNode) -> Symbol:
-        return StringConstant(self.symbol_context, node.value[1:-1], location=node.location)
+        return StringConstant(self.symbol_context, node.value, location=node.location)
 
     def annotate_named_expression(self, node: NamedExpressionNode) -> Symbol:
         symbol = self.search_named_symbol(node.scope, node.name, node.location)
@@ -504,7 +516,7 @@ class StaticAnnotator(ExpressionAnnotator):
         return None
 
     def annotate_overload(self, node: OverloadNode) -> Overload:
-        functions = [self.symbols[func].function for func in node.functions]
+        functions = [self.symbols[func] for func in node.functions]
         return Overload(self.module, node.name, cast(Sequence[Function], functions), location=node.location)
 
 
@@ -544,7 +556,7 @@ class ParentMemberAnnotator(SemanticAnnotator):
             parameters = [self.parent]
             parameters.extend(self.as_type(param.type) for param in node.parameters[1:])
         else:
-            parameters = [self.symbols[param.type].as_type(param.location) for param in node.parameters]
+            parameters = [self.as_type(param.type) for param in node.parameters]
 
         # if return type of function is auto it can be inferred to void
         if isinstance(node.return_type, AutoTypeNode):

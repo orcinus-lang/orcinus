@@ -63,14 +63,14 @@ class Workspace:
             if fullname.startswith(package.path):
                 return package
 
-        raise OrcinusError(f"Not found file `{url.path}` in packages")
+        raise OrcinusError(f"Not found file ‘{url.path}’ in packages")
 
     def get_package_for_module(self, name: str):
         for package in self.packages:
             if package.has_module(name):
                 return package
 
-        raise OrcinusError(f"Not found module `{name}` in packages")
+        raise OrcinusError(f"Not found module ‘{name}’ in packages")
 
     def get_or_create_document(self, doc_uri: str) -> Document:
         """
@@ -136,7 +136,7 @@ class Package:
         if fullname.startswith(self.path):
             return convert_module_name(fullname, self.path)
 
-        raise OrcinusError(f"Not found file `{filename}` in packages")
+        raise OrcinusError(f"Not found file ‘{filename}’ in packages")
 
     def get_filename(self, name: str) -> str:
         return convert_filename(name, self.path)
@@ -181,7 +181,7 @@ class Package:
                 with open(url.path, 'r', encoding='utf-8') as stream:
                     source = stream.read()
             except IOError:
-                raise OrcinusError(f"Not found file `{url.path}` in package `{self.name}`")
+                raise OrcinusError(f"Not found file ‘{url.path}’ in package ‘{self.name}’")
         document = Document(self, doc_uri, name=name, source=source, version=version)
         self.documents[doc_uri] = document
         self.modules[name] = document
@@ -300,7 +300,6 @@ class Document:
         return self.__module
 
     def analyze(self) -> Module:
-        self.semantic_model.define()
         self.semantic_model.analyze()
         self.workspace.on_document_analyze(document=self)
         return self.module
@@ -340,7 +339,7 @@ class SemanticLoader(SyntaxTreeLoader):
 def convert_module_name(filename, path):
     fullname = os.path.abspath(filename)
     if not fullname.startswith(path):
-        raise OrcinusError(f"Not found file `{filename}` in package `{path}`")
+        raise OrcinusError(f"Not found file ‘{filename}’ in package `{path}`")
 
     module_name = os.path.relpath(filename, path)
     module_name, _ = os.path.splitext(module_name)

@@ -4,6 +4,7 @@
 # of the MIT license.  See the LICENSE file for details.
 from __future__ import annotations
 
+import contextlib
 from collections import deque as Queue
 from typing import Set, MutableSequence
 
@@ -110,6 +111,12 @@ class Parser:
         self.current_token = self.scanner.consume_token()
         self.tokens = Queue()
         self.diagnostics = context.diagnostics
+        self.errors = [False]  # Current error level
+        self.skipped = [set()]  # Skipped
+
+    @property
+    def is_error(self) -> bool:
+        return any(self.errors)
 
     def match(self, index: TokenID) -> bool:
         # """
@@ -153,9 +160,34 @@ class Parser:
                 self.current_token = self.tokens.popleft()
             else:
                 self.current_token = self.scanner.consume_token()
+            if token.id in self.skipped[-1]:
+                self.errors[-1] = False
             return token
 
-        raise self.error(indexes)
+        if not self.is_error:
+            self.errors[-1] = True
+            self.error(indexes)
+
+        return SyntaxToken(next(iter(indexes)), "", Location(
+            self.current_token.location.filename,
+            self.current_token.location.begin,
+            self.current_token.location.end
+        ))
+
+    @contextlib.contextmanager
+    def recovery(self, index: TokenID):
+        """ Repair parser """
+        with self.recovery_any({index}):
+            yield
+
+    @contextlib.contextmanager
+    def recovery_any(self, indexes: Set[TokenID]):
+        """ Repair parser """
+        self.errors.append(False)
+        self.skipped.append(indexes)
+        yield
+        self.errors.pop()
+        self.skipped.pop()
 
     def unput(self, token: SyntaxToken):
         self.tokens.append(self.current_token)
@@ -167,14 +199,14 @@ class Parser:
         if len(indexes) > 1:
             required_names = []
             for x in indexes:
-                required_names.append('`{}`'.format(x.name))
-            message = "Required one of {}, but got `{}`".format(', '.join(required_names), existed_name)
+                required_names.append('‘{}’'.format(x.name))
+            message = "Required one of {}, but got ‘{}’".format(', '.join(required_names), existed_name)
         else:
             required_name = next(iter(indexes), None).name
-            message = "Required `{}`, but got `{}`".format(required_name, existed_name)
+            message = "Required ‘{}’, but got ‘{}’".format(required_name, existed_name)
 
         self.diagnostics.error(self.current_token.location, message)
-        raise DiagnosticError(self.current_token.location, message)
+        return DiagnosticError(self.current_token.location, message)
 
     def parse(self) -> SyntaxTree:
         # """
@@ -206,19 +238,22 @@ class Parser:
         #     'from' module_name 'import' aliases
         #     'import' aliases
         # """
-        if self.match(TokenID.From):
-            tok_from = self.consume()
-            token_name = self.parse_qualified_name()
-            self.consume(TokenID.Import)
-            aliases = self.parse_aliases()
-            self.consume(TokenID.NewLine)
-            return ImportFromNode(self.context, token_name.value, aliases, tok_from.location)
+        with self.recovery(TokenID.NewLine):
+            if self.match(TokenID.From):
+                token_from = self.consume()
+                with self.recovery(TokenID.NewLine):
+                    token_name = self.parse_qualified_name()
+                    token_import = self.consume(TokenID.Import)
+                    aliases = self.parse_aliases()
+                    token_newline = self.consume(TokenID.NewLine)
+                return ImportFromNode(self.context, token_from, token_name, token_import, aliases, token_newline)
 
-        elif self.match(TokenID.Import):
-            tok_import = self.consume()
-            aliases = self.parse_aliases()
-            self.consume(TokenID.NewLine)
-            return ImportNode(self.context, aliases, tok_import.location)
+            elif self.match(TokenID.Import):
+                token_import = self.consume()
+                with self.recovery(TokenID.NewLine):
+                    aliases = self.parse_aliases()
+                    token_newline = self.consume(TokenID.NewLine)
+                return ImportNode(self.context, token_import, aliases, token_newline)
 
         raise self.error(IMPORT_STARTS)
 
@@ -248,8 +283,8 @@ class Parser:
         if self.match(TokenID.As):
             self.consume(TokenID.As)
             token_alias = self.consume(TokenID.Name)
-            return AliasNode(self.context, token_name.value, token_alias.value, token_name.location)
-        return AliasNode(self.context, token_name.value, None, token_name.location)
+            return AliasNode(self.context, token_name, token_alias)
+        return AliasNode(self.context, token_name, None)
 
     def parse_qualified_name(self) -> SyntaxToken:
         # """
@@ -339,7 +374,7 @@ class Parser:
         # """
         token_pass = self.consume(TokenID.Pass)
         self.consume(TokenID.NewLine)
-        return PassMemberNode(self.context, token_pass.location)
+        return PassMemberNode(self.context, token_pass)
 
     def parse_decorated_member(self) -> MemberNode:
         # """
@@ -366,19 +401,20 @@ class Parser:
         #     decorators 'def' Name generic_parameters arguments [ -> type ] ':' '...'
         # """
         token_def = self.consume(TokenID.Def)
-        token_name = self.consume(TokenID.Name)
-        generic_parameters = self.parse_generic_parameters()
-        parameters = self.parse_function_parameters()
+        with self.recovery(TokenID.NewLine):
+            token_name = self.consume(TokenID.Name)
+            generic_parameters = self.parse_generic_parameters()
+            parameters = self.parse_function_parameters()
 
-        if self.match(TokenID.Then):
-            token_then = self.consume()
-            result_type = self.parse_type()
-        else:
-            token_then = None
-            result_type = AutoTypeNode(self.context, token_name.location)
+            if self.match(TokenID.Then):
+                token_then = self.consume(TokenID.Then)
+                result_type = self.parse_type()
+            else:
+                token_then = None
+                result_type = AutoTypeNode(self.context, token_name)
 
-        token_colon = self.consume(TokenID.Colon)
-        statement = self.parse_function_statement()
+            token_colon = self.consume(TokenID.Colon)
+            statement = self.parse_function_statement()
 
         return FunctionNode(
             self.context,
@@ -566,14 +602,11 @@ class Parser:
             return SyntaxCollection[GenericParameterNode]()
 
         self.consume(TokenID.LeftSquare)
-        generic_parameters = [
-
-            self.parse_generic_parameter()
-        ]
-
-        while self.match(TokenID.Comma):
-            self.consume(TokenID.Comma)
-            generic_parameters.append(self.parse_generic_parameter())
+        with self.recovery(TokenID.RightSquare):
+            generic_parameters = [self.parse_generic_parameter()]
+            while self.match(TokenID.Comma):
+                self.consume(TokenID.Comma)
+                generic_parameters.append(self.parse_generic_parameter())
 
         self.consume(TokenID.RightSquare)
         return SyntaxCollection[GenericParameterNode](generic_parameters)
@@ -592,13 +625,14 @@ class Parser:
         #     '(' [ function_parameter { ',' function_parameter } ] ')'
         # """
         self.consume(TokenID.LeftParenthesis)
-        parameters = []
-        if self.match(TokenID.Name):
-            parameters.append(self.parse_function_parameter())
-            while self.match(TokenID.Comma):
-                self.consume(TokenID.Comma)
+        with self.recovery(TokenID.RightSquare):
+            parameters = []
+            if self.match(TokenID.Name):
                 parameters.append(self.parse_function_parameter())
-        self.consume(TokenID.RightParenthesis)
+                while self.match(TokenID.Comma):
+                    self.consume(TokenID.Comma)
+                    parameters.append(self.parse_function_parameter())
+            self.consume(TokenID.RightParenthesis)
         return SyntaxCollection[ParameterNode](parameters)
 
     def parse_function_parameter(self):
@@ -612,7 +646,7 @@ class Parser:
             param_type = self.parse_type()
         else:
             token_colon = None
-            param_type = AutoTypeNode(self.context, token_name.location)
+            param_type = AutoTypeNode(self.context, token_name)
 
         if self.match(TokenID.Equal):
             token_equal = self.consume()
@@ -671,9 +705,7 @@ class Parser:
         #     Indent statement { statement } Undent
         # """
         token_indent = self.consume(TokenID.Indent)
-        statements = [
-            self.parse_statement()
-        ]
+        statements = [self.parse_statement()]
         while self.match_any(STATEMENT_STARTS):
             statements.append(self.parse_statement())
         token_undent = self.consume(TokenID.Undent)
@@ -681,7 +713,7 @@ class Parser:
         # noinspection PyArgumentList
         return BlockStatementNode(self.context, token_indent, SyntaxCollection(statements), token_undent)
 
-    def parse_statement(self):
+    def parse_statement(self) -> Optional[StatementNode]:
         # """
         # statement:
         #     pass_statement
@@ -718,7 +750,8 @@ class Parser:
         elif self.match_any(EXPRESSION_STARTS):
             return self.parse_expression_statement()
 
-        raise self.error(STATEMENT_STARTS)
+        self.error(STATEMENT_STARTS)
+        return None
 
     def parse_pass_statement(self):
         # """ pass_statement: pass """
@@ -1471,7 +1504,7 @@ class Parser:
         token_string = self.consume(TokenID.String)
 
         # noinspection PyArgumentList
-        return StringExpressionNode(self.context, token_string.value, token_string.location)
+        return StringExpressionNode(self.context, token_string)
 
     def parse_named_expression(self) -> ExpressionNode:
         # """
