@@ -110,7 +110,7 @@ class Symbol(abc.ABC):
         return f'<{class_name}: {self}>'
 
 
-class NamedSymbol(Symbol, abc.ABC):
+class Named(Symbol, abc.ABC):
     """ Abstract base for all named symbols """
 
     @property
@@ -122,12 +122,12 @@ class NamedSymbol(Symbol, abc.ABC):
         return self.name
 
 
-class Child(NamedSymbol, abc.ABC):
+class Child(Named, abc.ABC):
     """ Abstract base for all owned symbols """
 
     @property
     @abc.abstractmethod
-    def owner(self) -> ContainerSymbol:
+    def owner(self) -> Container:
         raise NotImplementedError
 
     @property
@@ -141,7 +141,7 @@ class Child(NamedSymbol, abc.ABC):
         return self.module.context
 
 
-class ContainerSymbol(Symbol, abc.ABC):
+class Container(Symbol, abc.ABC):
     """ Abstract base for container symbols """
 
     def __init__(self):
@@ -152,6 +152,14 @@ class ContainerSymbol(Symbol, abc.ABC):
     def members(self) -> Sequence[Child]:
         return self.__members
 
+    @property
+    def types(self) -> Sequence[Type]:
+        return [member for member in self.members if isinstance(member, Type)]
+
+    @property
+    def functions(self) -> Sequence[Function]:
+        return [member for member in self.members if isinstance(member, Function)]
+
     def add_member(self, symbol: Child):
         if symbol in self.__members:
             return
@@ -160,7 +168,7 @@ class ContainerSymbol(Symbol, abc.ABC):
         self.on_add_member(self, symbol)
 
 
-class ErrorSymbol(ContainerSymbol):
+class ErrorSymbol(Container):
     __location: Location
 
     def __init__(self, module: Module, location: Location):
@@ -213,7 +221,7 @@ class Value(Symbol, abc.ABC):
         raise NotImplementedError
 
 
-class Attribute(NamedSymbol):
+class Attribute(Named):
     def __init__(self, module: Module, name: str, arguments: Sequence[Value], location: Location):
         self.__module = module
         self.__location = location
@@ -244,19 +252,19 @@ class Attribute(NamedSymbol):
         return self.name
 
 
-class Module(NamedSymbol, ContainerSymbol):
+class Module(Named, Container):
     def __init__(self, context: SymbolContext, name, location: Location):
         super(Module, self).__init__()
 
         self.__context = weakref.ref(context)
         self.__name = name
         self.__location = location
-        self.__functions = []
-        self.__types = []
+        self.__declared_functions = []
+        self.__declared_types = []
         self.__dependencies = []
 
         self.context.add_module(self)
-        if not self == self.context.builtins_module:
+        if self is not self.context.builtins_module:
             self.add_dependency(self.context.builtins_module)
 
     @property
@@ -276,18 +284,18 @@ class Module(NamedSymbol, ContainerSymbol):
         return self.__dependencies
 
     @property
-    def functions(self) -> Sequence[Function]:
-        return self.__functions
+    def declared_functions(self) -> Sequence[Function]:
+        return self.__declared_functions
 
     @property
-    def types(self) -> Sequence[Type]:
-        return self.__types
+    def declared_types(self) -> Sequence[Type]:
+        return self.__declared_types
 
     def add_function(self, member: Function):
-        self.__functions.append(member)
+        self.__declared_functions.append(member)
 
     def add_type(self, member: Type):
-        self.__types.append(member)
+        self.__declared_types.append(member)
 
     def add_dependency(self, module: Module):
         self.__dependencies.append(module)
@@ -331,10 +339,10 @@ class GenericSymbol(Child, abc.ABC):
         return super(GenericSymbol, self).__str__()
 
 
-class Type(GenericSymbol, ContainerSymbol, abc.ABC):
+class Type(GenericSymbol, Container, abc.ABC):
     """ Abstract base for all types """
 
-    def __init__(self, owner: ContainerSymbol, name: str, location: Location):
+    def __init__(self, owner: Container, name: str, location: Location):
         super(Type, self).__init__()
 
         self.__owner = owner
@@ -352,7 +360,7 @@ class Type(GenericSymbol, ContainerSymbol, abc.ABC):
         self.on_build = Signal()
 
     @property
-    def owner(self) -> ContainerSymbol:
+    def owner(self) -> Container:
         return self.__owner
 
     @property
@@ -501,27 +509,27 @@ class GenericType(Type):
 
 
 class VoidType(Type):
-    def __init__(self, owner: ContainerSymbol, location: Location):
+    def __init__(self, owner: Container, location: Location):
         super(VoidType, self).__init__(owner, TYPE_VOID_NAME, location)
 
 
 class BooleanType(Type):
-    def __init__(self, owner: ContainerSymbol, location: Location):
+    def __init__(self, owner: Container, location: Location):
         super(BooleanType, self).__init__(owner, TYPE_BOOLEAN_NAME, location)
 
 
 class StringType(Type):
-    def __init__(self, owner: ContainerSymbol, location: Location):
+    def __init__(self, owner: Container, location: Location):
         super(StringType, self).__init__(owner, TYPE_STRING_NAME, location)
 
 
 class IntegerType(Type):
-    def __init__(self, owner: ContainerSymbol, location: Location):
+    def __init__(self, owner: Container, location: Location):
         super(IntegerType, self).__init__(owner, TYPE_INTEGER_NAME, location)
 
 
 class FloatType(Type):
-    def __init__(self, owner: ContainerSymbol, location: Location):
+    def __init__(self, owner: Container, location: Location):
         super(FloatType, self).__init__(owner, TYPE_FLOAT_NAME, location)
 
 
@@ -575,7 +583,7 @@ class EnumType(Type):
 
 
 class FunctionType(Type):
-    def __init__(self, owner: ContainerSymbol, parameters: Sequence[Type], return_type: Type, location: Location):
+    def __init__(self, owner: Container, parameters: Sequence[Type], return_type: Type, location: Location):
         super(FunctionType, self).__init__(owner, "Function", location)
 
         assert isinstance(return_type, Type)
@@ -737,7 +745,7 @@ class Parameter(Child, Value):
 
 
 class Function(GenericSymbol, Value):
-    def __init__(self, owner: ContainerSymbol, name: str, func_type: FunctionType, location: Location):
+    def __init__(self, owner: Container, name: str, func_type: FunctionType, location: Location):
         super(Function, self).__init__(func_type, location)
         self.__owner = owner
         self.__name = name
@@ -754,7 +762,7 @@ class Function(GenericSymbol, Value):
         self.module.add_function(self)
 
     @property
-    def owner(self) -> ContainerSymbol:
+    def owner(self) -> Container:
         return self.__owner
 
     @property
@@ -776,6 +784,10 @@ class Function(GenericSymbol, Value):
     @property
     def attributes(self) -> Sequence[Attribute]:
         return self.__attributes
+
+    @property
+    def is_abstract(self) -> bool:
+        return not bool(self.blocks)
 
     @cached_property
     def is_native(self) -> bool:
@@ -872,7 +884,7 @@ class Function(GenericSymbol, Value):
         return f'{self.name}({parameters}) -> {self.return_type}'
 
 
-class Overload(NamedSymbol):
+class Overload(Named):
     def __init__(self, module: Module, name: str, functions: Sequence[Function], location: Location):
         self.__module = module
         self.__name = name
@@ -984,7 +996,7 @@ class EnumConstant(Child, Value):
         return self.__name
 
     @property
-    def owner(self) -> ContainerSymbol:
+    def owner(self) -> Container:
         raise self.owner
 
     @property
@@ -1102,6 +1114,8 @@ class ReturnInstruction(TerminatorInstruction):
         self.value = value
 
     def as_inst(self) -> str:
+        if isinstance(self.value, NoneConstant):
+            return 'ret'
         return 'ret {}'.format(self.value.as_val())
 
 
@@ -1403,7 +1417,7 @@ class InstantiateBuilder:
         return instance
 
     def instantiate_function(self, original: Function, location: Location) -> Symbol:
-        owner = cast(ContainerSymbol, self.instantiate(original.owner, location))
+        owner = cast(Container, self.instantiate(original.owner, location))
         instance_type: FunctionType = self.instantiate(original.type, location)
         instance = Function(owner, original.name, instance_type, original.location)
         for original_param, instance_param in zip(original.parameters, instance.parameters):

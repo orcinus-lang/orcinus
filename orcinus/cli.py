@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+# Copyright (C) 2019 Vasiliy Sheredeko
+#
+# This software may be modified and distributed under the terms
+# of the MIT license.  See the LICENSE file for details.
 from __future__ import annotations
 
 import argparse
@@ -10,6 +14,7 @@ import sys
 from colorlog import ColoredFormatter
 
 from orcinus import __name__ as app_name, __version__ as app_version
+from orcinus.codegen import initialize_codegen, ModuleEmitter
 from orcinus.diagnostics import Diagnostic, DiagnosticSeverity, DiagnosticManager
 from orcinus.exceptions import OrcinusError
 from orcinus.workspace import Workspace
@@ -113,6 +118,11 @@ def compile_module(filename: str):
     document = workspace.get_or_create_document(filename)
     module = document.analyze()
     exit_diagnostics(document.diagnostics)
+
+    initialize_codegen()
+    emitter = ModuleEmitter(module.name)
+    emitter.emit(module)
+    print(emitter)
 
 
 def main():

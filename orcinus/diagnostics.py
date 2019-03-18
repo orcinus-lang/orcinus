@@ -55,11 +55,6 @@ class Diagnostic:
         return '"' + str(self) + '"'
 
 
-class DiagnosticError(Diagnostic, Exception):
-    def __init__(self, location: Location, message: str):
-        super(DiagnosticError, self).__init__(location, DiagnosticSeverity.Error, message)
-
-
 # The DiagnosticManager class is represented collection of diagnostics, and used for simple appending new diagnostic
 class DiagnosticManager(Sequence[Diagnostic]):
     def __init__(self):

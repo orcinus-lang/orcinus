@@ -15,14 +15,10 @@ setup(
         ],
     },
     install_requires=[
-        # 'attrs==18.1.0',
-        # 'llvmlite==0.26',
+        'llvmlite==0.28.0',
         'multidict==4.5.2',
-        # 'multimethod==1.0',
         'colorlog==3.1.4',
-        # 'json-rpc == 1.11.1',
         'pytest==4.3.0',
-        # 'hypothesis==4.7.1',
     ],
     extras_require={
         'mkdocs': [

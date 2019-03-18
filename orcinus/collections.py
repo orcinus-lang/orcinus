@@ -10,7 +10,7 @@ K = TypeVar('K')
 V = TypeVar('V')
 
 
-class SemanticDictionary(MutableMapping[K, V]):
+class LazyDictionary(MutableMapping[K, V]):
     def __init__(self, seq=None, *, constructor: Callable[[K], V], initializer: Callable[[K], None] = None, **kwargs):
         self.__items = dict(seq or (), **kwargs)
         self.__constructor = constructor

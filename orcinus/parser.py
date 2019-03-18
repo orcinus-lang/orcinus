@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections import deque as Queue
 from typing import Set, Mapping, MutableSequence
 
-from orcinus.diagnostics import DiagnosticError
+from orcinus.exceptions import DiagnosticError
 from orcinus.scanner import Scanner
 from orcinus.syntax import *
 

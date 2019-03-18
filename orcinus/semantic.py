@@ -509,13 +509,13 @@ class StaticAnnotator(ExpressionAnnotator):
 
 
 class ParentMemberAnnotator(SemanticAnnotator):
-    def __init__(self, model: SemanticModel, parent: ContainerSymbol):
+    def __init__(self, model: SemanticModel, parent: Container):
         super().__init__(model)
 
         self.__parent = parent
 
     @property
-    def parent(self) -> ContainerSymbol:
+    def parent(self) -> Container:
         return self.__parent
 
     def annotate_member(self, node: MemberNode) -> Optional[Symbol]:
