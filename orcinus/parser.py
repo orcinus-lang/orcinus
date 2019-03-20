@@ -65,7 +65,7 @@ STATEMENT_STARTS: Set[TokenID] = EXPRESSION_STARTS | {
     TokenID.Yield,
 }
 COMPARISON_STARTS: Set[TokenID] = {
-    TokenID.EqEqual,
+    TokenID.DoubleEqual,
     TokenID.NotEqual,
     TokenID.Less,
     TokenID.LessEqual,
@@ -96,12 +96,12 @@ PRIMARY_STARTS: Set[TokenID] = {
     TokenID.LeftCurly,
 }
 COMPARISON_IDS: Mapping[TokenID, CompareID] = {
-    TokenID.EqEqual: CompareID.Eq,
-    TokenID.NotEqual: CompareID.Ne,
-    TokenID.Less: CompareID.Lt,
-    TokenID.LessEqual: CompareID.Le,
-    TokenID.Great: CompareID.Gt,
-    TokenID.GreatEqual: CompareID.Ge
+    TokenID.DoubleEqual: CompareID.Equal,
+    TokenID.NotEqual: CompareID.NotEqual,
+    TokenID.Less: CompareID.Less,
+    TokenID.LessEqual: CompareID.LessEqual,
+    TokenID.Great: CompareID.Great,
+    TokenID.GreatEqual: CompareID.GreatEqual
 }
 UNARY_IDS: Mapping[TokenID, UnaryID] = {
     TokenID.Minus: UnaryID.Neg,

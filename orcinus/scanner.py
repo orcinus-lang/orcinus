@@ -330,7 +330,7 @@ class Scanner:
             if self.current_symbol == '=':
                 self.advance_symbol()
                 return TokenID.LessEqual
-            if self.current_symbol == '<':
+            elif self.current_symbol == '<':
                 self.advance_symbol()
                 if self.current_symbol == '=':
                     self.advance_symbol()
@@ -343,19 +343,19 @@ class Scanner:
             if self.current_symbol == '=':
                 self.advance_symbol()
                 return TokenID.GreatEqual
-            if self.current_symbol == '>':
+            elif self.current_symbol == '>':
                 self.advance_symbol()
                 if self.current_symbol == '=':
                     self.advance_symbol()
                     return TokenID.RightShiftEqual
                 return TokenID.RightShift
-            return TokenID.GreatEqual
+            return TokenID.Great
 
         if self.current_symbol == '=':
             self.advance_symbol()
             if self.current_symbol == '=':
                 self.advance_symbol()
-                return TokenID.EqEqual
+                return TokenID.DoubleEqual
             return TokenID.Equal
 
         if self.current_symbol == '!':

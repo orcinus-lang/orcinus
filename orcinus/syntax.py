@@ -36,7 +36,6 @@ class TokenID(enum.IntEnum):
     Def = enum.auto()
     Dot = enum.auto()
     Double = enum.auto()
-    DoubleAmpersand = enum.auto()
     DoubleCircumflex = enum.auto()
     DoubleSlash = enum.auto()
     DoubleSlashEqual = enum.auto()
@@ -47,7 +46,7 @@ class TokenID(enum.IntEnum):
     Else = enum.auto()
     EndOfFile = enum.auto()
     Enum = enum.auto()
-    EqEqual = enum.auto()
+    DoubleEqual = enum.auto()
     Equal = enum.auto()
     Error = enum.auto()
     Except = enum.auto()
@@ -1989,16 +1988,16 @@ class LogicExpressionNode(ExpressionNode):
 
 
 class CompareExpressionNode(ExpressionNode):
-    left_operand: ExpressionNode
+    left_argument: ExpressionNode
     comparators: SyntaxCollection[ComparatorNode]
 
     def __init__(self,
                  context: SyntaxContext,
-                 left_operand: ExpressionNode,
+                 left_argument: ExpressionNode,
                  comparators: SyntaxCollection[ComparatorNode]):
         super(CompareExpressionNode, self).__init__(context)
 
-        self.left_operand = left_operand
+        self.left_argument = left_argument
         self.comparators = comparators
 
     @property
@@ -2007,7 +2006,7 @@ class CompareExpressionNode(ExpressionNode):
 
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
-        return make_sequence([self.left_operand, self.comparators])
+        return make_sequence([self.left_argument, self.comparators])
 
 
 @enum.unique
@@ -2016,33 +2015,32 @@ class CompareID(enum.IntEnum):
     Is = enum.auto()
     NotIn = enum.auto()
     IsNot = enum.auto()
-
-    Eq = enum.auto()
-    Ne = enum.auto()
-    Lt = enum.auto()
-    Le = enum.auto()
-    Gt = enum.auto()
-    Ge = enum.auto()
+    Equal = enum.auto()
+    NotEqual = enum.auto()
+    Less = enum.auto()
+    LessEqual = enum.auto()
+    Great = enum.auto()
+    GreatEqual = enum.auto()
 
 
 class ComparatorNode(SyntaxNode):
     token_prefix: Optional[SyntaxToken]
     token_suffix: Optional[SyntaxToken]
-    operator: CompareID
-    right_operand: ExpressionNode
+    opcode: CompareID
+    right_argument: ExpressionNode
 
     def __init__(self,
                  context: SyntaxContext,
                  token_prefix: Optional[SyntaxToken],
                  token_suffix: Optional[SyntaxToken],
                  opcode: CompareID,
-                 right_operand: ExpressionNode):
+                 right_argument: ExpressionNode):
         super(ComparatorNode, self).__init__(context)
 
         self.token_prefix = token_prefix
         self.token_suffix = token_suffix
-        self.operator = opcode
-        self.right_operand = right_operand
+        self.opcode = opcode
+        self.right_argument = right_argument
 
     @cached_property
     def location(self) -> Location:
@@ -2051,7 +2049,7 @@ class ComparatorNode(SyntaxNode):
 
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
-        return make_sequence([self.token_prefix, self.token_suffix, self.right_operand])
+        return make_sequence([self.token_prefix, self.token_suffix, self.right_argument])
 
 
 class ConditionExpressionNode(ExpressionNode):
