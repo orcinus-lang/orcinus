@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import contextlib
 from collections import deque as Queue
-from typing import Set, MutableSequence
+from typing import Set, MutableSequence, Tuple
 
 from orcinus.exceptions import DiagnosticError
 from orcinus.scanner import Scanner
@@ -48,6 +48,7 @@ EXPRESSION_STARTS: Set[TokenID] = TARGET_STARTS | {
     TokenID.Tilde,
     TokenID.Plus,
     TokenID.Minus,
+    TokenID.Not,
 }
 SUBSCRIBE_ARGUMENT_STARTS = EXPRESSION_STARTS | {TokenID.Colon}
 STATEMENT_STARTS: Set[TokenID] = EXPRESSION_STARTS | {
@@ -55,6 +56,7 @@ STATEMENT_STARTS: Set[TokenID] = EXPRESSION_STARTS | {
     TokenID.Continue,
     TokenID.For,
     TokenID.If,
+    TokenID.Pass,
     TokenID.Raise,
     TokenID.Return,
     TokenID.Try,
@@ -73,7 +75,7 @@ COMPARISON_STARTS: Set[TokenID] = {
     TokenID.Is,
     TokenID.In,
 }
-AUGMENTED_STATEMENT_STARTS: Set[TokenID] = {TokenID.PlusEqual, TokenID.MinusEqual}
+
 DECORATED_STARTS: Set[TokenID] = {
     TokenID.Def,
     TokenID.Class,
@@ -101,6 +103,42 @@ COMPARISON_IDS: Mapping[TokenID, CompareID] = {
     TokenID.Great: CompareID.Gt,
     TokenID.GreatEqual: CompareID.Ge
 }
+UNARY_IDS: Mapping[TokenID, UnaryID] = {
+    TokenID.Minus: UnaryID.Neg,
+    TokenID.Plus: UnaryID.Pos,
+    TokenID.Tilde: UnaryID.Inv
+}
+BINARY_IDS: Mapping[TokenID, BinaryID] = {
+    TokenID.Plus: BinaryID.Add,
+    TokenID.Minus: BinaryID.Sub,
+    TokenID.Star: BinaryID.Mul,
+    TokenID.At: BinaryID.MatrixMul,
+    TokenID.Slash: BinaryID.TrueDiv,
+    TokenID.DoubleSlash: BinaryID.FloorDiv,
+    TokenID.Percent: BinaryID.Mod,
+    TokenID.VerticalLine: BinaryID.Or,
+    TokenID.Circumflex: BinaryID.Xor,
+    TokenID.Ampersand: BinaryID.And,
+    TokenID.LeftShift: BinaryID.LeftShift,
+    TokenID.RightShift: BinaryID.RightShift,
+    TokenID.DoubleStar: BinaryID.Pow,
+}
+AUGMENTED_IDS: Mapping[TokenID, BinaryID] = {
+    TokenID.PlusEqual: BinaryID.Add,
+    TokenID.MinusEqual: BinaryID.Sub,
+    TokenID.StarEqual: BinaryID.Mul,
+    TokenID.AtEqual: BinaryID.MatrixMul,
+    TokenID.SlashEqual: BinaryID.TrueDiv,
+    TokenID.DoubleSlashEqual: BinaryID.FloorDiv,
+    TokenID.PercentEqual: BinaryID.Mod,
+    TokenID.CircumflexEqual: BinaryID.Xor,
+    TokenID.VerticalLineEqual: BinaryID.Or,
+    TokenID.AmpersandEqual: BinaryID.And,
+    TokenID.DoubleStarEqual: BinaryID.Pow,
+    TokenID.LeftShiftEqual: BinaryID.LeftShift,
+    TokenID.RightShiftEqual: BinaryID.RightShift,
+}
+AUGMENTED_STATEMENT_STARTS: Set[TokenID] = set(AUGMENTED_IDS.keys())
 
 
 class Parser:
@@ -113,6 +151,7 @@ class Parser:
         self.diagnostics = context.diagnostics
         self.errors = [False]  # Current error level
         self.skipped = [set()]  # Skipped
+        self.last_position = self.current_token.location.end
 
     @property
     def is_error(self) -> bool:
@@ -155,29 +194,38 @@ class Parser:
         # :raise Diagnostic if current token is not matched passed identifiers
         # """
         if not indexes or self.match_any(indexes):
+            # consume token
             token = self.current_token
             if self.tokens:
                 self.current_token = self.tokens.popleft()
             else:
                 self.current_token = self.scanner.consume_token()
-            if token.id in self.skipped[-1]:
+
+            # stop error recovery mode
+            if not self.skipped[-1] or token.id in self.skipped[-1]:
                 self.errors[-1] = False
+
+            # change last position for error tokens
+            self.last_position = token.location.end
             return token
 
         if not self.is_error:
             self.errors[-1] = True
             self.error(indexes)
 
-        return SyntaxToken(next(iter(indexes)), "", Location(
+        return self.create_error_token(next(iter(indexes)))
+
+    def create_error_token(self, token_id):
+        return SyntaxToken(token_id, "", Location(
             self.current_token.location.filename,
-            self.current_token.location.begin,
-            self.current_token.location.end
+            self.last_position,
+            self.current_token.location.begin
         ))
 
     @contextlib.contextmanager
-    def recovery(self, index: TokenID):
+    def recovery(self, index: TokenID = None):
         """ Repair parser """
-        with self.recovery_any({index}):
+        with self.recovery_any({index} if index else {}):
             yield
 
     @contextlib.contextmanager
@@ -232,7 +280,7 @@ class Parser:
 
         return SyntaxCollection[ImportNode](imports)
 
-    def parse_import(self) -> ImportNode:
+    def parse_import(self) -> Optional[ImportNode]:
         # """
         # import:
         #     'from' module_name 'import' aliases
@@ -241,21 +289,20 @@ class Parser:
         with self.recovery(TokenID.NewLine):
             if self.match(TokenID.From):
                 token_from = self.consume()
-                with self.recovery(TokenID.NewLine):
-                    token_name = self.parse_qualified_name()
-                    token_import = self.consume(TokenID.Import)
-                    aliases = self.parse_aliases()
-                    token_newline = self.consume(TokenID.NewLine)
+                token_name = self.parse_qualified_name()
+                token_import = self.consume(TokenID.Import)
+                aliases = self.parse_aliases()
+                token_newline = self.consume(TokenID.NewLine)
                 return ImportFromNode(self.context, token_from, token_name, token_import, aliases, token_newline)
 
             elif self.match(TokenID.Import):
                 token_import = self.consume()
-                with self.recovery(TokenID.NewLine):
-                    aliases = self.parse_aliases()
-                    token_newline = self.consume(TokenID.NewLine)
+                aliases = self.parse_aliases()
+                token_newline = self.consume(TokenID.NewLine)
                 return ImportNode(self.context, token_import, aliases, token_newline)
 
-        raise self.error(IMPORT_STARTS)
+        self.error(IMPORT_STARTS)
+        return None
 
     def parse_aliases(self) -> SyntaxCollection[AliasNode]:
         # """
@@ -263,15 +310,29 @@ class Parser:
         #     alias { ',' alias }
         #     '(' alias { ',' alias } ')'
         # """
-        is_parenthesis = self.match(TokenID.LeftParenthesis)
-        if is_parenthesis:
-            self.consume()
-        aliases = [self.parse_alias()]
-        while self.match(TokenID.Comma):
-            self.consume()
-            aliases.append(self.parse_alias())
-        if is_parenthesis:
-            self.consume(TokenID.RightParenthesis)
+
+        # '('
+        if self.match(TokenID.LeftParenthesis):
+            token_open = self.consume()
+            token_skiped = {TokenID.RightParenthesis, TokenID.Comma}
+        else:
+            token_open = None
+            token_skiped = {TokenID.Comma}
+
+        with self.recovery_any(token_skiped):
+            # alias { ',' alias }
+            aliases = [token_open, self.parse_alias()]
+            while self.match(TokenID.Comma):
+                aliases.append(self.consume())
+                aliases.append(self.parse_alias())
+
+            # ')'
+            if token_open:
+                token_close = self.consume(TokenID.RightParenthesis)
+            else:
+                token_close = None
+            aliases.append(token_close)
+
         return SyntaxCollection[AliasNode](aliases)
 
     def parse_alias(self) -> AliasNode:
@@ -281,16 +342,20 @@ class Parser:
         # """
         token_name = self.parse_qualified_name()
         if self.match(TokenID.As):
-            self.consume(TokenID.As)
+            token_as = self.consume(TokenID.As)
             token_alias = self.consume(TokenID.Name)
-            return AliasNode(self.context, token_name, token_alias)
-        return AliasNode(self.context, token_name, None)
+        else:
+            token_as = None
+            token_alias = None
+
+        return AliasNode(self.context, token_name, token_as, token_alias)
 
     def parse_qualified_name(self) -> SyntaxToken:
         # """
         # module_name:
         #     Name { '.' Name }
         # """
+        # TODO: Capture whitespaces in token
         names = [self.consume(TokenID.Name)]
         while self.match(TokenID.Dot):
             self.consume()
@@ -301,7 +366,7 @@ class Parser:
             items.append(t.value)
         name = '.'.join(items)
         location = names[0].location + names[-1].location
-        return SyntaxToken(id=TokenID.Name, value=name, location=location)
+        return SyntaxToken(token_id=TokenID.Name, value=name, location=location)
 
     def parse_decorators(self) -> SyntaxCollection[DecoratorNode]:
         # """
@@ -318,16 +383,19 @@ class Parser:
         # decorator:
         #     '@' full
         # """
-        self.consume(TokenID.At)
+        token_at = self.consume(TokenID.At)
         token_name = self.parse_qualified_name()
-        arguments = SyntaxCollection[ArgumentNode]()
         if self.match(TokenID.LeftParenthesis):
-            self.consume(TokenID.LeftParenthesis)
+            token_open = self.consume(TokenID.LeftParenthesis)
             arguments = self.parse_named_arguments()
-            self.consume(TokenID.RightParenthesis)
-        self.consume(TokenID.NewLine)
+            token_close = self.consume(TokenID.RightParenthesis)
+        else:
+            token_open = None
+            arguments = SyntaxCollection[ArgumentNode]()
+            token_close = None
+        token_newline = self.consume(TokenID.NewLine)
 
-        return DecoratorNode(self.context, token_name.value, arguments, token_name.location)
+        return DecoratorNode(self.context, token_at, token_name, token_open, arguments, token_close, token_newline)
 
     def parse_members(self) -> SyntaxCollection[MemberNode]:
         # """
@@ -340,7 +408,7 @@ class Parser:
 
         return SyntaxCollection[MemberNode](members)
 
-    def parse_member(self):
+    def parse_member(self) -> Optional[MemberNode]:
         # """
         # member:
         #     function
@@ -365,18 +433,22 @@ class Parser:
             return self.parse_named_member()
         elif self.match(TokenID.Def):
             return self.parse_function()
-        return self.parse_pass_member()
+        elif self.match(TokenID.Pass):
+            return self.parse_pass_member()
 
-    def parse_pass_member(self):
+        self.error(MEMBER_STARTS)
+        return None
+
+    def parse_pass_member(self) -> PassMemberNode:
         # """
         # pass:
         #     "pass"
         # """
         token_pass = self.consume(TokenID.Pass)
-        self.consume(TokenID.NewLine)
-        return PassMemberNode(self.context, token_pass)
+        token_newline = self.consume(TokenID.NewLine)
+        return PassMemberNode(self.context, token_pass, token_newline)
 
-    def parse_decorated_member(self) -> MemberNode:
+    def parse_decorated_member(self) -> Optional[MemberNode]:
         # """
         # decorated_member:
         #     decorators function
@@ -393,9 +465,10 @@ class Parser:
         elif self.match(TokenID.Def):
             return self.parse_function(decorators)
 
-        raise self.error(DECORATED_STARTS)
+        self.error(DECORATED_STARTS)
+        return None
 
-    def parse_function(self, decorators=None):
+    def parse_function(self, decorators=None) -> FunctionNode:
         # """
         # function:
         #     decorators 'def' Name generic_parameters arguments [ -> type ] ':' '...'
@@ -429,7 +502,7 @@ class Parser:
             statement
         )
 
-    def parse_enum(self, decorators=None):
+    def parse_enum(self, decorators=None) -> EnumNode:
         # """
         # enum:
         #     "enum" Name parents ':' '\n' type_members
@@ -440,7 +513,7 @@ class Parser:
         parents = self.parse_type_parents()
         token_colon = self.consume(TokenID.Colon)
         token_newline = self.consume(TokenID.NewLine)
-        members = self.parse_type_members()
+        token_indent, members, token_undent = self.parse_type_members()
 
         return EnumNode(self.context,
                         decorators or SyntaxCollection[DecoratorNode](),
@@ -450,9 +523,11 @@ class Parser:
                         parents,
                         token_colon,
                         token_newline,
-                        members)
+                        token_indent,
+                        members,
+                        token_undent)
 
-    def parse_interface(self, decorators=None):
+    def parse_interface(self, decorators=None) -> InterfaceNode:
         # """
         # interface:
         #     "interface" Name generic_parameters parents ':' '\n' type_members
@@ -463,7 +538,7 @@ class Parser:
         parents = self.parse_type_parents()
         token_colon = self.consume(TokenID.Colon)
         token_newline = self.consume(TokenID.NewLine)
-        members = self.parse_type_members()
+        token_indent, members, token_undent = self.parse_type_members()
 
         return InterfaceNode(self.context,
                              decorators or SyntaxCollection[DecoratorNode](),
@@ -473,9 +548,11 @@ class Parser:
                              parents,
                              token_colon,
                              token_newline,
-                             members)
+                             token_indent,
+                             members,
+                             token_undent)
 
-    def parse_class(self, decorators=None):
+    def parse_class(self, decorators=None) -> ClassNode:
         # """
         # class:
         #     "class" Name generic_parameters parents ':' '\n' type_members
@@ -486,7 +563,7 @@ class Parser:
         parents = self.parse_type_parents()
         token_colon = self.consume(TokenID.Colon)
         token_newline = self.consume(TokenID.NewLine)
-        members = self.parse_type_members()
+        token_indent, members, token_undent = self.parse_type_members()
 
         return ClassNode(self.context,
                          decorators or SyntaxCollection[DecoratorNode](),
@@ -496,9 +573,11 @@ class Parser:
                          parents,
                          token_colon,
                          token_newline,
-                         members)
+                         token_indent,
+                         members,
+                         token_undent)
 
-    def parse_struct(self, decorators=None):
+    def parse_struct(self, decorators=None) -> StructNode:
         # """
         # struct:
         #     "struct" Name generic_parameters parents ':' '\n' type_members
@@ -509,7 +588,7 @@ class Parser:
         parents = self.parse_type_parents()
         token_colon = self.consume(TokenID.Colon)
         token_newline = self.consume(TokenID.NewLine)
-        members = self.parse_type_members()
+        token_indent, members, token_undent = self.parse_type_members()
 
         return StructNode(self.context,
                           decorators or SyntaxCollection[DecoratorNode](),
@@ -519,9 +598,11 @@ class Parser:
                           parents,
                           token_colon,
                           token_newline,
-                          members)
+                          token_indent,
+                          members,
+                          token_undent)
 
-    def parse_named_member(self):
+    def parse_named_member(self) -> Optional[MemberNode]:
         # """
         # named_member:
         #     enum_member
@@ -535,36 +616,40 @@ class Parser:
         elif self.match(TokenID.Colon):
             return self.parse_field_member(token_name)
 
-        raise self.error(NAMED_MEMBER_STARTS)
+        self.error(NAMED_MEMBER_STARTS)
+        return None
 
-    def parse_enum_member(self, token_name: SyntaxToken):
+    def parse_enum_member(self, token_name: SyntaxToken) -> EnumMemberNode:
         # """
         # enum_member:
         #     Name '=' '...'
         #     Name '=' expression
         # """
-        self.consume(TokenID.Equal)
+        token_equal = self.consume(TokenID.Equal)
         if self.match(TokenID.Ellipsis):
-            self.consume()
+            token_ellipsis = self.consume()
             value = None
         else:
+            token_ellipsis = None
             value = self.parse_expression()
-        self.consume(TokenID.NewLine)
-        return EnumMemberNode(self.context, token_name.value, value, token_name.location)
+        token_newline = self.consume(TokenID.NewLine)
+        return EnumMemberNode(self.context, token_name, token_equal, token_ellipsis, value, token_newline)
 
-    def parse_field_member(self, token_name: SyntaxToken):
+    def parse_field_member(self, token_name: SyntaxToken) -> FieldNode:
         # """
         # field_member:
         #     Name ':' type
         # """
-        self.consume(TokenID.Colon)
+        token_colon = self.consume(TokenID.Colon)
         field_type = self.parse_type()
-        default_value = None
         if self.match(TokenID.Equal):
-            self.consume()
+            token_equal = self.consume()
             default_value = self.parse_expression_list()
-        self.consume(TokenID.NewLine)
-        return FieldNode(self.context, token_name.value, field_type, default_value, token_name.location)
+        else:
+            token_equal = None
+            default_value = None
+        token_newline = self.consume(TokenID.NewLine)
+        return FieldNode(self.context, token_name, token_colon, field_type, token_equal, default_value, token_newline)
 
     def parse_type_parents(self) -> SyntaxCollection[TypeNode]:
         # """
@@ -574,24 +659,25 @@ class Parser:
         if not self.match(TokenID.LeftParenthesis):
             return SyntaxCollection[TypeNode]()
 
-        self.consume(TokenID.LeftParenthesis)
-        parents = [self.parse_type()]
-        while self.match(TokenID.Comma):
-            self.consume()
+        parents = [self.consume(TokenID.LeftParenthesis)]
+        with self.recovery(TokenID.RightParenthesis):
             parents.append(self.parse_type())
-        self.consume(TokenID.RightParenthesis)
+            while self.match(TokenID.Comma):
+                parents.append(self.consume())
+                parents.append(self.parse_type())
+            parents.append(self.consume(TokenID.RightParenthesis))
 
         return SyntaxCollection[TypeNode](parents)
 
-    def parse_type_members(self) -> SyntaxCollection[MemberNode]:
+    def parse_type_members(self) -> Tuple[SyntaxToken, SyntaxCollection[MemberNode], SyntaxToken]:
         # """
         # type_members:
         #     Indent members Undent
         # """
-        self.consume(TokenID.Indent)
+        token_indent = self.consume(TokenID.Indent)
         members = self.parse_members()
-        self.consume(TokenID.Undent)
-        return members
+        token_undent = self.consume(TokenID.Undent)
+        return token_indent, members, token_undent
 
     def parse_generic_parameters(self) -> SyntaxCollection[GenericParameterNode]:
         # """
@@ -601,41 +687,41 @@ class Parser:
         if not self.match(TokenID.LeftSquare):
             return SyntaxCollection[GenericParameterNode]()
 
-        self.consume(TokenID.LeftSquare)
+        generic_parameters = [self.consume(TokenID.LeftSquare)]
         with self.recovery(TokenID.RightSquare):
-            generic_parameters = [self.parse_generic_parameter()]
+            generic_parameters.append(self.parse_generic_parameter())
             while self.match(TokenID.Comma):
-                self.consume(TokenID.Comma)
+                generic_parameters.append(self.consume(TokenID.Comma))
                 generic_parameters.append(self.parse_generic_parameter())
 
-        self.consume(TokenID.RightSquare)
+            generic_parameters.append(self.consume(TokenID.RightSquare))
         return SyntaxCollection[GenericParameterNode](generic_parameters)
 
-    def parse_generic_parameter(self):
+    def parse_generic_parameter(self) -> GenericParameterNode:
         # """
         # generic_parameter:
         #     Name
         # """
         token_name = self.consume(TokenID.Name)
-        return GenericParameterNode(self.context, token_name.value, token_name.location)
+        return GenericParameterNode(self.context, token_name)
 
     def parse_function_parameters(self) -> SyntaxCollection[ParameterNode]:
         # """
         # function_parameters:
         #     '(' [ function_parameter { ',' function_parameter } ] ')'
         # """
-        self.consume(TokenID.LeftParenthesis)
+        parameters = [self.consume(TokenID.LeftParenthesis)]
         with self.recovery(TokenID.RightSquare):
-            parameters = []
             if self.match(TokenID.Name):
                 parameters.append(self.parse_function_parameter())
-                while self.match(TokenID.Comma):
-                    self.consume(TokenID.Comma)
-                    parameters.append(self.parse_function_parameter())
-            self.consume(TokenID.RightParenthesis)
+                with self.recovery(TokenID.Comma):
+                    while self.match(TokenID.Comma):
+                        parameters.append(self.consume(TokenID.Comma))
+                        parameters.append(self.parse_function_parameter())
+            parameters.append(self.consume(TokenID.RightParenthesis))
         return SyntaxCollection[ParameterNode](parameters)
 
-    def parse_function_parameter(self):
+    def parse_function_parameter(self) -> ParameterNode:
         # """
         # function_parameter:
         #     Name [ ':' type ]
@@ -657,7 +743,7 @@ class Parser:
 
         return ParameterNode(self.context, token_name, token_colon, param_type, token_equal, default_value)
 
-    def parse_type(self):
+    def parse_type(self) -> TypeNode:
         # """
         # type:
         #     Name
@@ -668,7 +754,7 @@ class Parser:
 
         while self.match(TokenID.LeftSquare):
             arguments = self.parse_generic_arguments()
-            result_type = ParameterizedTypeNode(self.context, result_type, arguments, token_name.location)
+            result_type = ParameterizedTypeNode(self.context, result_type, arguments)
 
         return result_type
 
@@ -677,33 +763,35 @@ class Parser:
         # generic_arguments:
         #     '[' type { ',' type} ']'
         # """
-        self.consume(TokenID.LeftSquare)
-        arguments = [self.parse_type()]
-        while self.match(TokenID.Comma):
-            self.consume(TokenID.Comma)
+
+        arguments = [self.consume(TokenID.LeftSquare)]
+        with self.recovery_any({TokenID.RightSquare, TokenID.Comma}):
             arguments.append(self.parse_type())
-        self.consume(TokenID.RightSquare)
+            while self.match(TokenID.Comma):
+                arguments.append(self.consume(TokenID.Comma))
+                arguments.append(self.parse_type())
+            arguments.append(self.consume(TokenID.RightSquare))
         return SyntaxCollection[TypeNode](arguments)
 
-    def parse_function_statement(self) -> Optional[StatementNode]:
+    def parse_function_statement(self) -> StatementNode:
         # """
         # function_statement:
         #     '...' EndFile
         #     NewLine block_statement
         # """
         if self.match(TokenID.Ellipsis):
-            self.consume(TokenID.Ellipsis)
-            self.consume(TokenID.NewLine)
-            return None
+            token_ellipsis = self.consume(TokenID.Ellipsis)
+            token_newline = self.consume(TokenID.NewLine)
+            return EllipsisStatementNode(self.context, token_ellipsis, token_newline)
 
-        self.consume(TokenID.NewLine)
         return self.parse_block_statement()
 
-    def parse_block_statement(self):
+    def parse_block_statement(self) -> BlockStatementNode:
         # """
         # block_statement:
-        #     Indent statement { statement } Undent
+        #     '\n' Indent statement { statement } Undent
         # """
+        token_newline = self.consume(TokenID.NewLine)
         token_indent = self.consume(TokenID.Indent)
         statements = [self.parse_statement()]
         while self.match_any(STATEMENT_STARTS):
@@ -711,7 +799,7 @@ class Parser:
         token_undent = self.consume(TokenID.Undent)
 
         # noinspection PyArgumentList
-        return BlockStatementNode(self.context, token_indent, SyntaxCollection(statements), token_undent)
+        return BlockStatementNode(self.context, token_newline, token_indent, SyntaxCollection(statements), token_undent)
 
     def parse_statement(self) -> Optional[StatementNode]:
         # """
@@ -756,10 +844,10 @@ class Parser:
     def parse_pass_statement(self):
         # """ pass_statement: pass """
         token_pass = self.consume(TokenID.Pass)
-        self.consume(TokenID.NewLine)
+        token_newline = self.consume(TokenID.NewLine)
 
         # noinspection PyArgumentList
-        return PassStatementNode(self.context, token_pass.location)
+        return PassStatementNode(self.context, token_pass, token_newline)
 
     def parse_return_statement(self):
         # """
@@ -768,22 +856,22 @@ class Parser:
         # """
         token_return = self.consume(TokenID.Return)
         value = self.parse_expression_list() if self.match_any(EXPRESSION_STARTS) else None
-        self.consume(TokenID.NewLine)
+        token_newline = self.consume(TokenID.NewLine)
 
         # noinspection PyArgumentList
-        return ReturnStatementNode(self.context, token_return, value)
+        return ReturnStatementNode(self.context, token_return, value, token_newline)
 
     def parse_yield_statement(self):
         # """
         # yield_statement
         #     'yield' [ expression_list ]
         # """
-        token_return = self.consume(TokenID.Yield)
+        token_yield = self.consume(TokenID.Yield)
         value = self.parse_expression_list() if self.match_any(EXPRESSION_STARTS) else None
-        self.consume(TokenID.NewLine)
+        token_newline = self.consume(TokenID.NewLine)
 
         # noinspection PyArgumentList
-        return YieldStatementNode(self.context, value, token_return.location)
+        return YieldStatementNode(self.context, token_yield, value, token_newline)
 
     def parse_break_statement(self):
         # """
@@ -791,10 +879,10 @@ class Parser:
         #     'break'
         # """
         token_break = self.consume(TokenID.Break)
-        self.consume(TokenID.NewLine)
+        token_newline = self.consume(TokenID.NewLine)
 
         # noinspection PyArgumentList
-        return BreakStatementNode(self.context, token_break.location)
+        return BreakStatementNode(self.context, token_break, token_newline)
 
     def parse_continue_statement(self):
         # """
@@ -802,70 +890,70 @@ class Parser:
         #     'continue'
         # """
         token_continue = self.consume(TokenID.Break)
-        self.consume(TokenID.NewLine)
+        token_newline = self.consume(TokenID.NewLine)
 
         # noinspection PyArgumentList
-        return ContinueStatementNode(self.context, token_continue.location)
+        return ContinueStatementNode(self.context, token_continue, token_newline)
 
-    def parse_else_statement(self) -> StatementNode:
+    def parse_else_statement(self) -> ElseStatementNode:
         # """
         # else_statement:
-        #     'else' ':' '\n' block_statement
+        #     'else' ':' block_statement
         # """
-        self.consume(TokenID.Else)
-        self.consume(TokenID.Colon)
-        self.consume(TokenID.NewLine)
-        return self.parse_block_statement()
+        token_else = self.consume(TokenID.Else)
+        with self.recovery(TokenID.NewLine):
+            token_colon = self.consume(TokenID.Colon)
+            statement = self.parse_block_statement()
+            return ElseStatementNode(self.context, token_else, token_colon, statement)
 
-    def parse_finally_statement(self) -> StatementNode:
+    def parse_finally_statement(self) -> FinallyStatementNode:
         # """
         # finally_statement:
-        #     'finally' ':' '\n' block_statement
+        #     'finally' ':' block_statement
         # """
-        self.consume(TokenID.Finally)
-        self.consume(TokenID.Colon)
-        self.consume(TokenID.NewLine)
-        return self.parse_block_statement()
+        token_finally = self.consume(TokenID.Finally)
+        with self.recovery(TokenID.NewLine):
+            token_colon = self.consume(TokenID.Colon)
+            statement = self.parse_block_statement()
+            return FinallyStatementNode(self.context, token_finally, token_colon, statement)
 
-    def parse_condition_statement(self, token_id: TokenID = TokenID.If):
+    def parse_condition_statement(self) -> ConditionStatementNode:
         # """
         # condition_statement:
-        #     'if' expression ':' '\n' block_statement            ⏎
-        #         { 'elif' expression ':' '\n' block_statement }  ⏎
+        #     'if' expression ':' block_statement            ⏎
+        #         { 'elif' expression ':' block_statement }  ⏎
         #         [ else_statement ]
         # """
-        token_if = self.consume(token_id)
+        token_if = self.consume()
         condition = self.parse_expression()
-        self.consume(TokenID.Colon)
-        self.consume(TokenID.NewLine)
+        token_colon = self.consume(TokenID.Colon)
         then_statement = self.parse_block_statement()
 
         else_statement = None
         if self.match(TokenID.Else):
             else_statement = self.parse_else_statement()
         elif self.match(TokenID.Elif):
-            else_statement = self.parse_condition_statement(TokenID.Elif)
+            else_statement = self.parse_condition_statement()
 
         # noinspection PyArgumentList
-        return ConditionStatementNode(self.context, condition, then_statement, else_statement, token_if.location)
+        return ConditionStatementNode(self.context, token_if, condition, token_colon, then_statement, else_statement)
 
-    def parse_while_statement(self):
+    def parse_while_statement(self) -> WhileStatementNode:
         # """
         # while_statement:
-        #     'while' expression ':' '\n' block_statement     ⏎
-        #         [ 'else' ':' '\n' block_statement ]
+        #     'while' expression ':' block_statement     ⏎
+        #         [ else_statement ]
         # """
         token_while = self.consume(TokenID.While)
         condition = self.parse_expression()
-        self.consume(TokenID.Colon)
-        self.consume(TokenID.NewLine)
+        token_colon = self.consume(TokenID.Colon)
         then_statement = self.parse_block_statement()
         else_statement = self.parse_else_statement() if self.match(TokenID.Else) else None
 
         # noinspection PyArgumentList
-        return WhileStatementNode(self.context, condition, then_statement, else_statement, token_while.location)
+        return WhileStatementNode(self.context, token_while, condition, token_colon, then_statement, else_statement)
 
-    def parse_for_statement(self):
+    def parse_for_statement(self) -> ForStatementNode:
         # """
         # for_statement:
         #     'for' target_list 'in' expression_list ':' '\n' block_statement     ⏎
@@ -873,52 +961,54 @@ class Parser:
         # """
         token_for = self.consume(TokenID.For)
         target = self.parse_target_list()
-        self.consume(TokenID.In)
+        token_in = self.consume(TokenID.In)
         source = self.parse_expression_list()
-        self.consume(TokenID.Colon)
-        self.consume(TokenID.NewLine)
+        token_colon = self.consume(TokenID.Colon)
         then_statement = self.parse_block_statement()
         else_statement = self.parse_else_statement() if self.match(TokenID.Else) else None
 
         # noinspection PyArgumentList
         return ForStatementNode(
             self.context,
+            token_for,
             target,
+            token_in,
             source,
+            token_colon,
             then_statement,
             else_statement,
             token_for.location
         )
 
-    def parse_raise_statement(self):
+    def parse_raise_statement(self) -> RaiseStatementNode:
         # """
         # raise_statement:
-        #     'raise' [ expression [ "from" expression ] ]
+        #     'raise' [ expression [ "from" expression ] ] '\n'
         # """
         token_raise = self.consume(TokenID.Raise)
         exception = None
         cause_exception = None
+        token_from = None
         if self.match_any(EXPRESSION_STARTS):
             exception = self.parse_expression()
             if self.match(TokenID.From):
-                self.consume()
+                token_from = self.consume()
                 cause_exception = self.parse_expression()
 
-        self.consume(TokenID.NewLine)
-        return RaiseStatementNode(self.context, exception, cause_exception, token_raise.location)
+        token_newline = self.consume(TokenID.NewLine)
+        return RaiseStatementNode(self.context, token_raise, exception, token_from, cause_exception, token_newline)
 
     def parse_try_statement(self):
         # """
         # try_statement:
-        #     'try' ':' '\n' block_statement
+        #     'try' ':' block_statement
         #         { except_handler }              ⏎
         #         [ else_statement ]              ⏎
         #         [ finally_statement ]
-        #     'try' ':' '\n' block_statement finally_statement
+        #     'try' ':' block_statement finally_statement
         # """
         token_try = self.consume(TokenID.Try)
-        self.consume(TokenID.Colon)
-        self.consume(TokenID.NewLine)
+        token_colon = self.consume(TokenID.Colon)
         try_statement = self.parse_block_statement()
 
         handlers = []
@@ -930,49 +1020,56 @@ class Parser:
 
             else_statement = self.parse_else_statement() if self.match(TokenID.Else) else None
             finally_statement = self.parse_finally_statement() if self.match(TokenID.Finally) else None
-        elif self.match(TokenID.Finally):
-            finally_statement = self.parse_finally_statement()
         else:
-            raise self.error({TokenID.Except, TokenID.Finally})
+            finally_statement = self.parse_finally_statement()
 
-        return TryStatementNode(self.context, try_statement, SyntaxCollection(handlers), else_statement,
-                                finally_statement, token_try.location)
+        handlers = SyntaxCollection(handlers)
+
+        return TryStatementNode(
+            self.context,
+            token_try,
+            token_colon,
+            try_statement,
+            handlers,
+            else_statement,
+            finally_statement
+        )
 
     def parse_except_handler(self) -> ExceptHandlerNode:
         # """
         # except_handler:
-        #     'except' [ expression [ 'as' Name ] ':' '\n' block_statement
+        #     'except' [ expression [ 'as' Name ] ':' block_statement
         # """
         token_except = self.consume(TokenID.Except)
         expression = None
-        name = None
+        token_as = None
+        token_name = None
         if self.match_any(EXPRESSION_STARTS):
             expression = self.parse_expression()
             if self.match(TokenID.As):
-                self.consume()
-                name = self.consume(TokenID.Name).value
-        self.consume(TokenID.Colon)
-        self.consume(TokenID.NewLine)
+                token_as = self.consume()
+                token_name = self.consume(TokenID.Name)
+        token_colon = self.consume(TokenID.Colon)
         statement = self.parse_block_statement()
 
-        return ExceptHandlerNode(self.context, expression, name, statement, token_except.location)
+        return ExceptHandlerNode(self.context, token_except, expression, token_as, token_name, token_colon, statement)
 
-    def parse_with_statement(self):
+    def parse_with_statement(self) -> WithStatementNode:
         # """
         # with_statement:
-        #     'with' with_item { ',' with_item } ':' '\n' block_statement
+        #     'with' with_item { ',' with_item } ':'  block_statement
         # """
         token_with = self.consume(TokenID.With)
         items = [self.parse_with_item()]
         while self.match(TokenID.Comma):
-            self.consume()
+            items.append(self.consume())
             items.append(self.parse_with_item())
 
-        self.consume(TokenID.Colon)
-        self.consume(TokenID.NewLine)
+        items = SyntaxCollection(items)
+        token_colon = self.consume(TokenID.Colon)
         statement = self.parse_block_statement()
 
-        return WithStatementNode(self.context, SyntaxCollection(items), statement, token_with.location)
+        return WithStatementNode(self.context, token_with, items, token_colon, statement)
 
     def parse_with_item(self):
         # """
@@ -980,12 +1077,14 @@ class Parser:
         #     expression [ 'as' target ]
         # """
         expression = self.parse_expression()
-        target = None
         if self.match(TokenID.As):
-            self.consume()
+            token_as = self.consume()
             target = self.parse_target()
+        else:
+            token_as = None
+            target = None
 
-        return WithItemNode(self.context, expression, target, expression.location)
+        return WithItemNode(self.context, expression, token_as, target)
 
     def parse_expression_statement(self):
         # """
@@ -994,18 +1093,15 @@ class Parser:
         #     assign_expression
         # """
         expression = self.parse_expression_list()
-        statement = None
 
         if self.match(TokenID.Equal):
-            statement = self.parse_assign_statement(expression)
+            return self.parse_assign_statement(expression)
         elif self.match_any(AUGMENTED_STATEMENT_STARTS):
-            statement = self.parse_augmented_assign_statement(expression)
+            return self.parse_augmented_assign_statement(expression)
+        token_newline = self.consume(TokenID.NewLine)
 
-        self.consume(TokenID.NewLine)
-        if not statement:
-            # noinspection PyArgumentList
-            statement = ExpressionStatementNode(self.context, expression, expression.location)
-        return statement
+        # noinspection PyArgumentList
+        return ExpressionStatementNode(self.context, expression, token_newline)
 
     def parse_assign_statement(self, target: ExpressionNode):
         # """
@@ -1014,11 +1110,12 @@ class Parser:
         #
         # TODO: https://docs.python.org/3/reference/simple_stmts.html#grammar-token-assignment-stmt
         # """
-        token_equals = self.consume(TokenID.Equal)
+        token_equal = self.consume(TokenID.Equal)
         source = self.parse_expression_list()
+        token_newline = self.consume(TokenID.NewLine)
 
         # noinspection PyArgumentList
-        return AssignStatementNode(self.context, target, source, token_equals.location)
+        return AssignStatementNode(self.context, target, token_equal, source, token_newline)
 
     def parse_augmented_assign_statement(self, target: ExpressionNode):
         # """
@@ -1027,20 +1124,16 @@ class Parser:
         #
         # TODO: https://docs.python.org/3/reference/simple_stmts.html#grammar-token-assignment-stmt
         # """
-        if self.match(TokenID.PlusEqual):
-            token_operator = self.consume()
-            opcode = BinaryID.Add
-        elif self.match(TokenID.MinusEqual):
-            token_operator = self.consume()
-            opcode = BinaryID.Sub
-        else:
-            raise self.error(AUGMENTED_STATEMENT_STARTS)
+        token_operator = self.consume_any(AUGMENTED_STATEMENT_STARTS)
+        opcode = AUGMENTED_IDS[token_operator.id]
+
         source = self.parse_expression_list()
+        token_newline = self.consume(TokenID.NewLine)
 
         # noinspection PyArgumentList
-        return AugmentedAssignStatementNode(self.context, target, opcode, source, token_operator.location)
+        return AugmentedAssignStatementNode(self.context, target, token_operator, opcode, source, token_newline)
 
-    def parse_arguments(self, arguments: MutableSequence[ExpressionNode] = None) -> SyntaxCollection[ExpressionNode]:
+    def parse_arguments(self, arguments: Sequence[ExpressionNode] = None) -> SyntaxCollection[ExpressionNode]:
         # """
         # arguments:
         #     [ expression { ',' expression } [','] ]
@@ -1048,17 +1141,16 @@ class Parser:
         if not arguments and not self.match_any(EXPRESSION_STARTS):
             return SyntaxCollection[ExpressionNode]()
 
-        arguments = arguments or []
+        arguments = list(arguments or [])
         if not arguments:
             arguments.append(self.parse_expression())
 
         while self.match(TokenID.Comma):
-            self.consume(TokenID.Comma)
+            arguments.append(self.consume(TokenID.Comma))
             if self.match_any(EXPRESSION_STARTS):
                 arguments.append(self.parse_expression())
             else:
                 break
-
         return SyntaxCollection[ExpressionNode](arguments)
 
     def parse_dict_arguments(self, arguments: MutableSequence[DictArgumentNode] = None) \
@@ -1075,7 +1167,7 @@ class Parser:
             arguments.append(self.parse_dict_argument())
 
         while self.match(TokenID.Comma):
-            self.consume(TokenID.Comma)
+            arguments.append(self.consume(TokenID.Comma))
             if self.match_any(EXPRESSION_STARTS):
                 arguments.append(self.parse_dict_argument())
             else:
@@ -1089,9 +1181,9 @@ class Parser:
         #     expression ':' expression
         # """
         key = self.parse_expression()
-        self.consume(TokenID.Colon)
+        token_colon = self.consume(TokenID.Colon)
         value = self.parse_expression()
-        return DictArgumentNode(self.context, key, value, key.location)
+        return DictArgumentNode(self.context, key, token_colon, value)
 
     def parse_named_arguments(self) -> SyntaxCollection[ArgumentNode]:
         # """
@@ -1134,16 +1226,16 @@ class Parser:
         #     target { ',' target }
         # """
 
-        targets = [
+        arguments = [
             self.parse_target()
         ]
         while self.match(TokenID.Comma):
-            self.consume()
-            targets.append(self.parse_target())
+            arguments.append(self.consume())
+            arguments.append(self.parse_target())
 
-        if len(targets) == 1:
-            return targets[0]
-        return TupleExpressionNode(self.context, SyntaxCollection(targets), targets[0].location)
+        if len(arguments) == 1:
+            return arguments[0]
+        return TupleExpressionNode(self.context, None, SyntaxCollection(arguments), None)
 
     def parse_target(self):
         return self.parse_primary_expression()
@@ -1153,19 +1245,17 @@ class Parser:
         # expression_list:
         #     expression { ',' expression } [',']
         # """
-        expressions = [self.parse_expression()]
+        arguments = [self.parse_expression()]
         while self.match(TokenID.Comma):
-            self.consume()
+            arguments.append(self.consume())
             if self.match_any(EXPRESSION_STARTS):
-                expressions.append(self.parse_expression())
+                arguments.append(self.parse_expression())
             else:
                 break
 
-        if len(expressions) == 1:
-            return expressions[0]
-
-        location = expressions[0].location + expressions[-1].location
-        return TupleExpressionNode(self.context, SyntaxCollection(expressions), location)
+        if len(arguments) == 1:
+            return arguments[0]
+        return TupleExpressionNode(self.context, None, SyntaxCollection(arguments), None)
 
     def parse_expression(self) -> ExpressionNode:
         # """
@@ -1183,10 +1273,16 @@ class Parser:
         if self.match(TokenID.If):
             token_if = self.consume()
             condition = self.parse_logical_or_expression()
-            self.consume(TokenID.Else)
+            token_else = self.consume(TokenID.Else)
             else_expression = self.parse_expression()
-            expression = ConditionExpressionNode(self.context, expression, condition, else_expression,
-                                                 token_if.location)
+            expression = ConditionExpressionNode(
+                self.context,
+                expression,
+                token_if,
+                condition,
+                token_else,
+                else_expression
+            )
         return expression
 
     def parse_logical_or_expression(self) -> ExpressionNode:
@@ -1199,7 +1295,7 @@ class Parser:
         while self.match(TokenID.Or):
             token_or = self.consume()
             right_operand = self.parse_logical_and_expression()
-            expression = LogicExpressionNode(self.context, LogicID.Or, expression, right_operand, token_or.location)
+            expression = LogicExpressionNode(self.context, expression, token_or, LogicID.Or, right_operand)
         return expression
 
     def parse_logical_and_expression(self) -> ExpressionNode:
@@ -1210,9 +1306,9 @@ class Parser:
         # """
         expression = self.parse_logical_not_expression()
         while self.match(TokenID.And):
-            token_or = self.consume()
+            token_and = self.consume()
             right_operand = self.parse_logical_not_expression()
-            expression = LogicExpressionNode(self.context, LogicID.And, expression, right_operand, token_or.location)
+            expression = LogicExpressionNode(self.context, expression, token_and, LogicID.And, right_operand)
         return expression
 
     def parse_logical_not_expression(self) -> ExpressionNode:
@@ -1222,9 +1318,9 @@ class Parser:
         #     "not" logical_not_expression
         # """
         while self.match(TokenID.Not):
-            tok_not = self.consume(TokenID.Not)
+            token_not = self.consume(TokenID.Not)
             expression = self.parse_logical_not_expression()
-            return UnaryExpressionNode(self.context, UnaryID.Not, expression, tok_not.location)
+            return UnaryExpressionNode(self.context, token_not, UnaryID.Not, expression)
         return self.parse_comparison_expression()
 
     def parse_comparison_expression(self) -> ExpressionNode:
@@ -1249,32 +1345,34 @@ class Parser:
 
         while self.match_any(COMPARISON_STARTS):
             if self.match(TokenID.Not):
-                self.consume()
-                token_operator = self.consume(TokenID.In)
-                opcode = CompareID.In
+                token_prefix = self.consume()
+                token_suffix = self.consume(TokenID.In)
+                opcode = CompareID.NotIn
 
             elif self.match(TokenID.Is):
-                token_operator = self.consume()
+                token_prefix = self.consume()
                 if self.match(TokenID.Not):
-                    self.consume()
+                    token_suffix = self.consume()
                     opcode = CompareID.IsNot
                 else:
+                    token_suffix = None
                     opcode = CompareID.Is
 
             elif self.match(TokenID.In):
-                token_operator = self.consume()
+                token_prefix = self.consume()
+                token_suffix = None
                 opcode = CompareID.In
 
             else:
-                token_operator = self.consume_any(COMPARISON_STARTS)
-                opcode = COMPARISON_IDS[token_operator.id]
+                token_prefix = self.consume_any(COMPARISON_STARTS)
+                token_suffix = None
+                opcode = COMPARISON_IDS[token_prefix.id]
 
             right_operand = self.parse_and_expression()
-            comparators.append(ComparatorNode(self.context, opcode, right_operand, token_operator.location))
+            comparators.append(ComparatorNode(self.context, token_prefix, token_suffix, opcode, right_operand))
 
         if comparators:
-            return CompareExpressionNode(
-                self.context, expression, SyntaxCollection[ComparatorNode](comparators), comparators[0].location)
+            return CompareExpressionNode(self.context, expression, SyntaxCollection[ComparatorNode](comparators))
         return expression
 
     def parse_or_expression(self) -> ExpressionNode:
@@ -1283,18 +1381,18 @@ class Parser:
         #     xor_expression
         #     or_expression '|' xor_expression
         # """
-        expression = self.parse_and_expression()
+        expression = self.parse_xor_expression()
         while self.match(TokenID.VerticalLine):
             token_operator = self.consume(TokenID.VerticalLine)
-            right_operand = self.parse_and_expression()
+            right_operand = self.parse_xor_expression()
 
             # noinspection PyArgumentList
             expression = BinaryExpressionNode(
                 self.context,
-                BinaryID.Or,
                 expression,
-                right_operand,
-                token_operator.location
+                token_operator,
+                BINARY_IDS[token_operator.id],
+                right_operand
             )
         return expression
 
@@ -1302,19 +1400,20 @@ class Parser:
         # """
         # xor_expression:
         #     and_expression
-        #     xor_expression '&' and_expression
+        #     xor_expression '^' and_expression
         # """
         expression = self.parse_and_expression()
-        while self.match(TokenID.Xor):
-            token_operator = self.consume(TokenID.Xor)
+        while self.match(TokenID.Circumflex):
+            token_operator = self.consume(TokenID.Circumflex)
             right_operand = self.parse_and_expression()
 
             # noinspection PyArgumentList
             expression = BinaryExpressionNode(
-                operator=BinaryID.Xor,
-                left_operand=expression,
-                right_operand=right_operand,
-                token_operator=token_operator
+                self.context,
+                expression,
+                token_operator,
+                BINARY_IDS[token_operator.id],
+                right_operand
             )
         return expression
 
@@ -1331,10 +1430,11 @@ class Parser:
 
             # noinspection PyArgumentList
             expression = BinaryExpressionNode(
-                operator=BinaryID.And,
-                left_operand=expression,
-                right_operand=right_operand,
-                token_operator=token_operator
+                self.context,
+                expression,
+                token_operator,
+                BINARY_IDS[token_operator.id],
+                right_operand
             )
         return expression
 
@@ -1342,8 +1442,23 @@ class Parser:
         # """
         # shift_expression:
         #     addition_expression
+        #     shift_expression '<<' addition_expression
+        #     shift_expression '>>' addition_expression
         # """
-        return self.parse_addition_expression()
+        expression = self.parse_addition_expression()
+        while self.match_any({TokenID.LeftShift, TokenID.RightShift}):
+            token_operator = self.consume()
+            right_operand = self.parse_addition_expression()
+
+            # noinspection PyArgumentList
+            expression = BinaryExpressionNode(
+                self.context,
+                expression,
+                token_operator,
+                BINARY_IDS[token_operator.id],
+                right_operand
+            )
+        return expression
 
     def parse_addition_expression(self) -> ExpressionNode:
         # """
@@ -1354,20 +1469,17 @@ class Parser:
         # """
         expression = self.parse_multiplication_expression()
         while self.match_any({TokenID.Plus, TokenID.Minus}):
-            if self.match(TokenID.Plus):
-                token_operator = self.consume(TokenID.Plus)
-                right_operand = self.parse_unary_expression()
+            token_operator = self.consume()
+            right_operand = self.parse_unary_expression()
 
-                # noinspection PyArgumentList
-                expression = BinaryExpressionNode(self.context, BinaryID.Add, expression, right_operand,
-                                                  token_operator.location)
-            elif self.match(TokenID.Minus):
-                token_operator = self.consume(TokenID.Minus)
-                right_operand = self.parse_unary_expression()
-
-                # noinspection PyArgumentList
-                expression = BinaryExpressionNode(self.context, BinaryID.Sub, expression, right_operand,
-                                                  token_operator.location)
+            # noinspection PyArgumentList
+            expression = BinaryExpressionNode(
+                self.context,
+                expression,
+                token_operator,
+                BINARY_IDS[token_operator.id],
+                right_operand
+            )
         return expression
 
     def parse_multiplication_expression(self) -> ExpressionNode:
@@ -1375,90 +1487,64 @@ class Parser:
         # multiplication_expression:
         #     unary_expression
         #     multiplication_expression '*' unary_expression
-        #     # multiplication_expression '@' multiplication_expression
+        #     multiplication_expression '@' multiplication_expression
         #     multiplication_expression '//' unary_expression
         #     multiplication_expression '/' unary_expression
-        #     # multiplication_expression '%' unary_expression
+        #     multiplication_expression '%' unary_expression
         # """
         expression = self.parse_unary_expression()
-        while self.match_any({TokenID.Star, TokenID.Slash, TokenID.DoubleSlash}):
-            if self.match(TokenID.Star):
-                token_operator = self.consume(TokenID.Star)
-                right_operand = self.parse_unary_expression()
+        while self.match_any({TokenID.Star, TokenID.At, TokenID.Slash, TokenID.DoubleSlash, TokenID.Percent}):
+            token_operator = self.consume()
+            right_operand = self.parse_unary_expression()
 
-                # noinspection PyArgumentList
-                expression = BinaryExpressionNode(self.context, BinaryID.Mul, expression, right_operand,
-                                                  token_operator.location)
-
-            elif self.match(TokenID.Slash):
-                token_operator = self.consume(TokenID.Slash)
-                right_operand = self.parse_unary_expression()
-
-                # noinspection PyArgumentList
-                expression = BinaryExpressionNode(self.context, BinaryID.TrueDiv, expression, right_operand,
-                                                  token_operator.location)
-
-            elif self.match(TokenID.DoubleSlash):
-                token_operator = self.consume(TokenID.DoubleSlash)
-                right_operand = self.parse_unary_expression()
-
-                # noinspection PyArgumentList
-                expression = BinaryExpressionNode(self.context, BinaryID.FloorDiv, expression, right_operand,
-                                                  token_operator.location)
+            # noinspection PyArgumentList
+            expression = BinaryExpressionNode(
+                self.context,
+                expression,
+                token_operator,
+                BINARY_IDS[token_operator.id],
+                right_operand)
 
         return expression
 
     def parse_unary_expression(self) -> ExpressionNode:
         # """
-        # u_expr:
-        #     power
-        #     "-" u_expr
-        #     "+" u_expr
-        #     "~" u_expr
+        # unary_expression:
+        #     power_expression
+        #     "-" unary_expression
+        #     "+" unary_expression
+        #     "~" unary_expression
         # """
-        if self.match(TokenID.Minus):
-            token_operator = self.consume(TokenID.Minus)
+        while self.match_any({TokenID.Minus, TokenID.Plus, TokenID.Tilde}):
+            token_operator = self.consume()
             operand = self.parse_unary_expression()
 
             # noinspection PyArgumentList
-            return UnaryExpressionNode(self.context, UnaryID.Neg, operand, token_operator.location)
-
-        elif self.match(TokenID.Plus):
-            token_operator = self.consume(TokenID.Plus)
-            operand = self.parse_unary_expression()
-
-            # noinspection PyArgumentList
-            return UnaryExpressionNode(self.context, UnaryID.Pos, operand, token_operator.location)
-
-        elif self.match(TokenID.Tilde):
-            token_operator = self.consume(TokenID.Tilde)
-            operand = self.parse_unary_expression()
-
-            # noinspection PyArgumentList
-            return UnaryExpressionNode(self.context, UnaryID.Inv, operand, token_operator.location)
+            return UnaryExpressionNode(self.context, token_operator, UNARY_IDS[token_operator.id], operand)
 
         return self.parse_power_expression()
 
     def parse_power_expression(self) -> ExpressionNode:
         # """
-        # power:
-        #     primary ["**" u_expr]
+        # power_expression:
+        #     primary_expression ["**" unary_expression]
         # """
         expression = self.parse_primary_expression()
         if self.match(TokenID.DoubleStar):
             token_operator = self.consume(TokenID.DoubleStar)
-            unary_expression = self.parse_unary_expression()
+            right_operand = self.parse_unary_expression()
 
             # noinspection PyArgumentList
             expression = BinaryExpressionNode(
-                operator=BinaryID.Pow,
-                left_operand=expression,
-                right_operand=unary_expression,
-                token_operator=token_operator
+                self.context,
+                expression,
+                token_operator,
+                BINARY_IDS[token_operator.id],
+                right_operand
             )
         return expression
 
-    def parse_primary_expression(self) -> ExpressionNode:
+    def parse_primary_expression(self) -> Optional[ExpressionNode]:
         # """
         # primary:
         #      number_expression
@@ -1482,7 +1568,8 @@ class Parser:
         elif self.match(TokenID.LeftCurly):
             expression = self.parse_set_or_dict_expression()
         else:
-            raise self.error(PRIMARY_STARTS)
+            self.error(PRIMARY_STARTS)
+            return IntegerExpressionNode(self.context, self.create_error_token(TokenID.Integer))
 
         return self.parse_ending_expression(expression)
 
@@ -1538,12 +1625,12 @@ class Parser:
         # call_expression
         #     atom '(' arguments ')'
         # """
-        self.consume(TokenID.LeftParenthesis)
+        token_open = self.consume(TokenID.LeftParenthesis)
         arguments = self.parse_named_arguments()
-        self.consume(TokenID.RightParenthesis)
+        token_close = self.consume(TokenID.RightParenthesis)
 
         # noinspection PyArgumentList
-        return CallExpressionNode(self.context, expression, arguments, expression.location)
+        return CallExpressionNode(self.context, expression, token_open, arguments, token_close)
 
     def parse_subscribe_expression(self, expression: ExpressionNode) -> ExpressionNode:
         # """
@@ -1566,7 +1653,7 @@ class Parser:
         token_name = self.consume(TokenID.Name)
 
         # noinspection PyArgumentList
-        return AttributeExpressionNode(self.context, expression, token_name.value, token_dot.location)
+        return AttributeExpressionNode(self.context, expression, token_dot, token_name)
 
     def parse_parenthesis_expression(self) -> ExpressionNode:
         # """
@@ -1577,21 +1664,17 @@ class Parser:
         arguments = self.parse_arguments()
         token_close = self.consume(TokenID.RightParenthesis)
 
-        if len(arguments) == 1:
-            return arguments[0]
-
-        location = token_open.location + token_close.location
-        return TupleExpressionNode(self.context, SyntaxCollection(arguments), location)
+        return TupleExpressionNode(self.context, token_open, arguments, token_close)
 
     def parse_array_expression(self):
         # """
         # array_expression:
         #     '(' expression ')'
         # """
-        tok_array = self.consume(TokenID.LeftSquare)
+        token_open = self.consume(TokenID.LeftSquare)
         arguments = self.parse_arguments()
-        self.consume(TokenID.RightSquare)
-        return ArrayExpressionNode(self.context, arguments, tok_array.location)
+        token_close = self.consume(TokenID.RightSquare)
+        return ArrayExpressionNode(self.context, token_open, arguments, token_close)
 
     def parse_set_or_dict_expression(self):
         # """
@@ -1599,35 +1682,35 @@ class Parser:
         #     set_expression
         #     dict_expression
         # """
-        tok_open = self.consume(TokenID.LeftCurly)
+        token_open = self.consume(TokenID.LeftCurly)
         if not self.match_any(EXPRESSION_STARTS):
-            tok_close = self.consume(TokenID.RightCurly)
-            return DictExpressionNode(self.context, SyntaxCollection(), tok_open.location + tok_close.location)
+            token_close = self.consume(TokenID.RightCurly)
+            return DictExpressionNode(self.context, token_open, SyntaxCollection(), token_close)
 
         key = self.parse_expression()
         if self.match(TokenID.Colon):
-            self.consume()
+            token_colon = self.consume()
             value = self.parse_expression()
-            return self.parse_dict_expression([DictArgumentNode(self.context, key, value, key.location)])
-        return self.parse_set_expression([key])
+            return self.parse_dict_expression(token_open, [DictArgumentNode(self.context, key, token_colon, value)])
+        return self.parse_set_expression(token_open, [key])
 
-    def parse_set_expression(self, arguments: MutableSequence[ExpressionNode]):
+    def parse_set_expression(self, token_open: SyntaxToken, arguments: MutableSequence[ExpressionNode]):
         # """
         # set_expression:
         #     '{' arguments '}'
         # """
         arguments = self.parse_arguments(arguments)
-        tok_array = self.consume(TokenID.RightCurly)
-        return SetExpressionNode(self.context, arguments, tok_array.location)
+        token_close = self.consume(TokenID.RightCurly)
+        return SetExpressionNode(self.context, token_open, arguments, token_close)
 
-    def parse_dict_expression(self, arguments: MutableSequence[DictArgumentNode]):
+    def parse_dict_expression(self, token_open: SyntaxToken, arguments: MutableSequence[DictArgumentNode]):
         # """
         # dict_expression:
         #     '{' dict_arguments '}'
         # """
         arguments = self.parse_dict_arguments(arguments)
-        tok_array = self.consume(TokenID.RightCurly)
-        return DictExpressionNode(self.context, arguments, tok_array.location)
+        token_close = self.consume(TokenID.RightCurly)
+        return DictExpressionNode(self.context, token_open, arguments, token_close)
 
     def parse_subscribe_arguments(self):
         # """

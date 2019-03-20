@@ -80,7 +80,10 @@ class Scanner:
             return
 
         elif token_id == TokenID.EndOfFile:
-            # location = Location(token.location.filename, token.location.end, token.location.end)
+            if not self.is_new_line:
+                # Push extra new line
+                self.push_token(TokenID.NewLine, "\n", location)
+
             while self.indentations[-1] > 0:
                 self.push_token(TokenID.Undent, "", location)
                 self.indentations.pop()
@@ -304,11 +307,35 @@ class Scanner:
             return self.consume_keyword()
 
         # Special symbols
+        if self.current_symbol == '~':
+            self.advance_symbol()
+            return TokenID.Tilde
+
+        if self.current_symbol == '^':
+            self.advance_symbol()
+            if self.current_symbol == '=':
+                self.advance_symbol()
+                return TokenID.CircumflexEqual
+            return TokenID.Circumflex
+
+        if self.current_symbol == '%':
+            self.advance_symbol()
+            if self.current_symbol == '=':
+                self.advance_symbol()
+                return TokenID.PercentEqual
+            return TokenID.Percent
+
         if self.current_symbol == '<':
             self.advance_symbol()
             if self.current_symbol == '=':
                 self.advance_symbol()
                 return TokenID.LessEqual
+            if self.current_symbol == '<':
+                self.advance_symbol()
+                if self.current_symbol == '=':
+                    self.advance_symbol()
+                    return TokenID.LeftShiftEqual
+                return TokenID.LeftShift
             return TokenID.Less
 
         if self.current_symbol == '>':
@@ -316,6 +343,12 @@ class Scanner:
             if self.current_symbol == '=':
                 self.advance_symbol()
                 return TokenID.GreatEqual
+            if self.current_symbol == '>':
+                self.advance_symbol()
+                if self.current_symbol == '=':
+                    self.advance_symbol()
+                    return TokenID.RightShiftEqual
+                return TokenID.RightShift
             return TokenID.GreatEqual
 
         if self.current_symbol == '=':
@@ -343,6 +376,9 @@ class Scanner:
 
         if self.current_symbol == '@':
             self.advance_symbol()
+            if self.current_symbol == '=':
+                self.advance_symbol()
+                return TokenID.AtEqual
             return TokenID.At
 
         if self.current_symbol == '(':
@@ -400,16 +436,25 @@ class Scanner:
 
         if self.current_symbol == '|':
             self.advance_symbol()
+            if self.current_symbol == '=':
+                self.advance_symbol()
+                return TokenID.VerticalLineEqual
             return TokenID.VerticalLine
 
         if self.current_symbol == '&':
             self.advance_symbol()
+            if self.current_symbol == '=':
+                self.advance_symbol()
+                return TokenID.AmpersandEqual
             return TokenID.Ampersand
 
         if self.current_symbol == '*':
             self.advance_symbol()
             if self.current_symbol == '*':
                 self.advance_symbol()
+                if self.current_symbol == '=':
+                    self.advance_symbol()
+                    return TokenID.DoubleStarEqual
                 return TokenID.DoubleStar
             elif self.current_symbol == '=':
                 self.advance_symbol()

@@ -16,7 +16,7 @@ import weakref
 from typing import Optional, MutableMapping
 from typing import Sequence
 
-from orcinus.diagnostics import DiagnosticManager, Diagnostic
+from orcinus.diagnostics import DiagnosticManager
 from orcinus.exceptions import OrcinusError
 from orcinus.parser import Parser
 from orcinus.scanner import Scanner
@@ -224,6 +224,7 @@ class Document:
         self.__source = source
         self.__version = version
         self.__syntax_tree = None
+        self.__semantic_context = None
         self.__semantic_model = None
         self.__module = None
 
@@ -281,9 +282,11 @@ class Document:
             self.__syntax_tree = parser.parse()
         return self.__syntax_tree
 
-    @cached_property
+    @property
     def semantic_context(self) -> SemanticContext:
-        return SemanticContext(SemanticLoader(self.workspace), diagnostics=self.diagnostics)
+        if not self.__semantic_context:
+            self.__semantic_context= SemanticContext(SemanticLoader(self.workspace), diagnostics=self.diagnostics)
+        return self.__semantic_context
 
     @property
     def semantic_model(self) -> SemanticModel:
@@ -308,6 +311,7 @@ class Document:
         """ Invalidate document, e.g. detach syntax tree or semantic model from this document """
         self.diagnostics.clear()
         self.__module = None
+        self.__semantic_context = None
         self.__semantic_model = None
         self.__syntax_tree = None
 

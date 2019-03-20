@@ -17,6 +17,7 @@ from orcinus import __name__ as app_name, __version__ as app_version
 from orcinus.codegen import initialize_codegen, ModuleEmitter
 from orcinus.diagnostics import Diagnostic, DiagnosticSeverity, DiagnosticManager
 from orcinus.exceptions import OrcinusError
+from orcinus.server.server import LanguageTCPServer
 from orcinus.workspace import Workspace
 
 logger = logging.getLogger('orcinus')
@@ -40,10 +41,10 @@ def log_diagnostics(diagnostics: DiagnosticManager):
         DIAGNOSTIC_LOGGERS.get(diagnostic.severity, logger.info)(diagnostic)
 
 
-def exit_diagnostics(diagnostics: DiagnosticManager):
+def exit_diagnostics(diagnostics: DiagnosticManager) -> Optional[int]:
     log_diagnostics(diagnostics)
-    if diagnostics.has_error:
-        sys.exit(1)
+    if diagnostics.has_errors:
+        return 1
 
 
 def initialize_logging():
@@ -112,17 +113,24 @@ def process_pdb(action):
     return wrapper
 
 
-def compile_module(filename: str):
+def compile_module(filename: str, *, output=sys.stdout):
     # initialize workspace context
     workspace = Workspace(paths=[os.getcwd()])
     document = workspace.get_or_create_document(filename)
     module = document.analyze()
-    exit_diagnostics(document.diagnostics)
+    error_code = exit_diagnostics(document.diagnostics)
+    if error_code is not None:
+        return error_code
 
     initialize_codegen()
     emitter = ModuleEmitter(module.name)
     emitter.emit(module)
-    print(emitter)
+    output.write(str(emitter))
+
+
+def start_server(hostname, port):
+    server = LanguageTCPServer()
+    server.listen(hostname, port)
 
 
 def main():
@@ -141,9 +149,13 @@ def main():
     # compile module
     compile_cmd = subparsers.add_parser('compile')
     compile_cmd.add_argument('filename', type=str, help="input file")
-    compile_cmd.add_argument('--pdb', dest=KEY_PDB, action='store_true', help="post-mortem mode")
-    compile_cmd.add_argument('-l', '--level', dest=KEY_LEVEL, choices=LEVELS, default=DEFAULT_LEVEL)
     compile_cmd.add_argument(dest=KEY_ACTION, help=argparse.SUPPRESS, action='store_const', const=compile_module)
+
+    # add command: Run LSP server
+    server_cmd = subparsers.add_parser('server', help='Run server language server protocol')
+    server_cmd.add_argument('--hostname', type=str, default='0.0.0.0')
+    server_cmd.add_argument('--port', type=int, default=55290)
+    server_cmd.add_argument(dest=KEY_ACTION, help=argparse.SUPPRESS, action='store_const', const=start_server)
 
     # parse arguments
     kwargs = parser.parse_args().__dict__
@@ -162,7 +174,3 @@ def main():
     else:
         parser.print_usage()
         return 2
-
-
-if __name__ == '__main__':
-    main()

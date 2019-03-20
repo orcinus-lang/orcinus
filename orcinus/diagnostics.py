@@ -59,7 +59,7 @@ class Diagnostic:
 class DiagnosticManager(Sequence[Diagnostic]):
     def __init__(self):
         self.__diagnostics = []
-        self.has_error = False
+        self.has_errors = False
         self.has_warnings = False
 
     def __iter__(self):
@@ -72,7 +72,7 @@ class DiagnosticManager(Sequence[Diagnostic]):
         return len(self.__diagnostics)
 
     def add(self, location: Location, severity: DiagnosticSeverity, message: str, source: str = "orcinus"):
-        self.has_error |= severity == DiagnosticSeverity.Error
+        self.has_errors |= severity == DiagnosticSeverity.Error
         self.has_warnings |= severity == DiagnosticSeverity.Warning
 
         self.__diagnostics.append(

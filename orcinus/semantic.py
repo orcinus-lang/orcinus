@@ -176,11 +176,25 @@ class SemanticModel:
             self.tree.find_descendants(lambda node: isinstance(node, FunctionNode))
         )
         for func in functions:
-            if func.statement:
+            if not func.is_abstract:
                 self.emit_function(func)
 
     def __repr__(self):
         return f'<SemanticModel: {self.module}>'
+
+    def get_types(self, scope: Optional[SyntaxScope] = None) -> Iterator[Type]:
+        """ Returns all types in scope """
+        if scope:
+            for name in scope:
+                item = scope.resolve(name)
+                if isinstance(item, TypeDeclarationNode):
+                    yield self.symbols[item]
+
+            yield from self.get_types(scope.parent)
+        else:
+            for symbol in self.imports.values():
+                if isinstance(symbol, Type):
+                    yield symbol
 
 
 class SemanticScope(MutableMapping[SyntaxNode, Symbol]):
@@ -833,18 +847,18 @@ class FunctionAnnotator(ExpressionAnnotator):
             return self.annotate_pass_statement(node)
         elif isinstance(node, ReturnStatementNode):
             return self.annotate_return_statement(node)
-        elif isinstance(node, ConditionStatementNode):
-            return self.annotate_condition_statement(node)
-        elif isinstance(node, WhileStatementNode):
-            return self.annotate_while_statement(node)
+        # elif isinstance(node, ConditionStatementNode):
+        #     return self.annotate_condition_statement(node)
+        # elif isinstance(node, WhileStatementNode):
+        #     return self.annotate_while_statement(node)
         elif isinstance(node, ExpressionStatementNode):
             return self.annotate_expression_statement(node)
-        elif isinstance(node, AssignStatementNode):
-            return self.annotate_assign_statement(node)
-        elif isinstance(node, BreakStatementNode):
-            return self.annotate_break_statement(node)
-        elif isinstance(node, ContinueStatementNode):
-            return self.annotate_continue_statement(node)
+        # elif isinstance(node, AssignStatementNode):
+        #     return self.annotate_assign_statement(node)
+        # elif isinstance(node, BreakStatementNode):
+        #     return self.annotate_break_statement(node)
+        # elif isinstance(node, ContinueStatementNode):
+        #     return self.annotate_continue_statement(node)
         else:
             self.diagnostics.error(node.location, 'Not implemented statement')
             return False

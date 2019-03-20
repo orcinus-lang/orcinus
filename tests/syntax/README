@@ -1,0 +1,4 @@
+tests/syntax
+=============
+
+This directory contains source code for test syntax scanning and parsing

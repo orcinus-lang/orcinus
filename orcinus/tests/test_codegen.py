@@ -1,8 +1,10 @@
-#!/usr/bin/env python
 # Copyright (C) 2019 Vasiliy Sheredeko
 #
 # This software may be modified and distributed under the terms
 # of the MIT license.  See the LICENSE file for details.
+from __future__ import annotations
+
+import io
 import os
 import subprocess
 import sys
@@ -10,20 +12,14 @@ import warnings as pywarnings
 
 import pytest
 
+from orcinus.cli import compile_module
+from orcinus.tests import find_scripts
+
 OPT_EXECUTABLE = 'opt-6.0'
 LLI_EXECUTABLE = 'lli-6.0'
 BOOTSTRAP_SCRIPT = 'orcinus'
 
-
-def find_scripts(path):
-    for path, _, filenames in os.walk(path):
-        for filename in filenames:
-            basename, ext = os.path.splitext(filename)
-            if ext == '.orx':
-                yield os.path.join(path, basename)
-
-
-TEST_FIXTURES = sorted(s for s in find_scripts('./tests'))
+TEST_FIXTURES = sorted(s for s in find_scripts('./tests/codegen'))
 
 
 def execute(command, *, input=None, is_binary=False, is_error=False):
@@ -69,9 +65,11 @@ def get_build_options():
 
 def compile_and_execute(filename, *, name, opt_level, arguments, input=None):
     # orcinus - generate LLVM IR
-    code, assembly, stderr = execute([BOOTSTRAP_SCRIPT, 'compile', filename], is_binary=True, is_error=True)
-    if code:
-        return False, -code, assembly, stderr.decode('utf-8').rstrip()
+    stream = io.StringIO()
+    compile_module(filename, output=stream)
+
+    stream.seek(0, io.SEEK_SET)
+    assembly = stream.read().encode('utf-8')
 
     # lli-6.0 - compile LLVM IR and execute
     flags = [
@@ -98,10 +96,8 @@ def source_name(fixture_value):
 
 @pytest.fixture(params=TEST_FIXTURES, ids=source_name)
 def source_cases(request):
-    fixture, _ = os.path.splitext(request.param)
-    root_path = os.path.dirname(__file__)
-
-    fullname = os.path.abspath(os.path.join(root_path, "{}.orx".format(fixture)))
+    fullname = "{}.orx".format(request.param)
+    fixture = os.path.relpath(fullname, os.getcwd())
 
     warnings_list = []
     arguments = []

@@ -1,2 +1,3 @@
-from system import
-from io import Text,
+def main(a: int) -> int:
+    return -1
+
