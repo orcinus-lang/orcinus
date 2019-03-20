@@ -10,6 +10,7 @@ from typing import Deque
 from typing import MutableMapping, Tuple
 
 from orcinus.exceptions import OrcinusError
+from orcinus.flow import FlowGraph, FlowNode
 from orcinus.symbols import *
 from orcinus.syntax import *
 from orcinus.utils import cached_property
@@ -166,7 +167,7 @@ class SemanticModel:
 
         self.import_symbols()
 
-        self.queue.append(self.tree)
+        self.queue.append_instruction(self.tree)
         self.symbols.get(self.tree)
         while self.queue:
             node = self.queue.popleft()
@@ -177,6 +178,9 @@ class SemanticModel:
         )
         for func in functions:
             if not func.is_abstract:
+                annotator = FlowAnnotator(self)
+                graph = annotator.annotate(func)
+                breakpoint()
                 self.emit_function(func)
 
     def __repr__(self):
@@ -226,7 +230,7 @@ class SemanticScope(MutableMapping[SyntaxNode, Symbol]):
                 value = self.__constructor(key)
                 if value is not None:
                     self.__items[key] = value
-                    self.__model.queue.append(key)
+                    self.__model.queue.append_instruction(key)
                     return value
 
             # otherwise return it's from parent
@@ -803,6 +807,76 @@ class FunctionResolver(SemanticMixin):
         if functions:
             return functions[0]
         return None
+
+
+class FlowAnnotator(SemanticMixin):
+    def __init__(self, model: SemanticModel):
+        super().__init__(model)
+
+        self.graph = FlowGraph()
+        self.current_block = self.graph.append_block('entry', self.graph.enter_node)
+
+    def annotate(self, node: FunctionNode) -> FlowGraph:
+        if not node.is_abstract:
+            self.annotate_statement(node.statement)
+        return self.graph
+
+    def annotate_statement(self, node: StatementNode):
+        if isinstance(node, BlockStatementNode):
+            return self.annotate_block_statement(node)
+        elif isinstance(node, ReturnStatementNode):
+            return self.annotate_return_statement(node)
+        elif isinstance(node, WhileStatementNode):
+            return self.annotate_while_statement(node)
+        elif isinstance(node, ConditionStatementNode):
+            return self.annotate_condition_statement(node)
+
+        self.diagnostics.error(node.location, 'Not implemented control flow annotation for statement')
+
+    def annotate_block_statement(self, node: BlockStatementNode):
+        for child in node.statements:
+            self.annotate_statement(child)
+
+    def annotate_while_statement(self, node: WhileStatementNode):
+        # while True
+        #   ...
+        enter_loop = self.graph.append_block('while.enter', None)
+        then_loop = self.graph.append_block('while.then', None)
+
+        self.current_block = enter_loop
+        self.annotate_expression(node.condition)
+        self.current_block.append_exit(FlowNode(then_loop))
+        self.current_block.append_exit()
+
+        pass
+
+    def annotate_condition_statement(self, node: ConditionStatementNode):
+        pass
+
+    def annotate_return_statement(self, node: ReturnStatementNode):
+        if node.value:
+            self.annotate_expression(node.value)
+
+        self.current_block.exit_node = self.graph.exit_node
+
+    def annotate_expression(self, node: ExpressionNode):
+        if isinstance(node, IntegerExpressionNode):
+            return self.annotate_integer_expression(node)
+        elif isinstance(node, StringExpressionNode):
+            return self.annotate_string_expression(node)
+        elif isinstance(node, NamedExpressionNode):
+            return self.annotate_named_expression(node)
+
+        self.diagnostics.error(node.location, 'Not implemented control flow annotation for statement')
+
+    def annotate_integer_expression(self, node: IntegerExpressionNode):
+        self.current_block.append_instruction(node)
+
+    def annotate_string_expression(self, node: StringExpressionNode):
+        self.current_block.append_instruction(node)
+
+    def annotate_named_expression(self, node: NamedExpressionNode):
+        self.current_block.append_instruction(node)
 
 
 class FunctionAnnotator(ExpressionAnnotator):

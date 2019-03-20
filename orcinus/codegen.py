@@ -120,7 +120,7 @@ class FunctionEmitter:
             for inst in block.instructions:
                 self.emit_instruction(inst)
 
-    def get_value(self, value: Value):
+    def get_value(self, value: Value) -> ir.Value:
         if isinstance(value, IntegerConstant):
             return ir.Constant(self.llvm_types[value.type], value.value)
         elif isinstance(value, NoneConstant):
@@ -128,7 +128,7 @@ class FunctionEmitter:
 
         raise DiagnosticError(value.location, u'Conversion to LLVM is not implemented')
 
-    def emit_instruction(self, inst: Instruction):
+    def emit_instruction(self, inst: Instruction) -> ir.Value:
         if isinstance(inst, ReturnInstruction):
             result = self.emit_return_instruction(inst)
         else:
@@ -137,9 +137,9 @@ class FunctionEmitter:
         self.llvm_instructions[inst] = result
         return result
 
-    def emit_return_instruction(self, inst: ReturnInstruction):
+    def emit_return_instruction(self, inst: ReturnInstruction) -> ir.Value:
         value = self.get_value(inst.value)
-        self.llvm_builder.ret(value)
+        return self.llvm_builder.ret(value)
 
 
 def initialize_codegen():

@@ -38,7 +38,7 @@ class Signal:
             if isinstance(receiver, weakref.ReferenceType):
                 receiver = receiver()
             if receiver:
-                receiver.append(receiver)
+                receiver.append_instruction(receiver)
         return receivers
 
     def __call__(self, *args, **kwargs):

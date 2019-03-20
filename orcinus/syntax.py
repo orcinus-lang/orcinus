@@ -1449,7 +1449,7 @@ class AugmentedAssignStatementNode(StatementNode):
                  context: SyntaxContext,
                  target: ExpressionNode,
                  token_operator: SyntaxToken,
-                 opcode: BinaryID,  # TODO: Mapping?
+                 opcode: BinaryID,
                  source: ExpressionNode,
                  token_newline: SyntaxToken):
         super(AugmentedAssignStatementNode, self).__init__(context)
