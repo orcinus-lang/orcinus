@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import heapq
+import itertools
 import logging
 from typing import Deque
 from typing import MutableMapping, Tuple
 
 from orcinus.exceptions import OrcinusError
-from orcinus.flow import FlowGraph, FlowNode
+from orcinus.flow import FlowGraph, FlowBuilder
 from orcinus.symbols import *
 from orcinus.syntax import *
 from orcinus.utils import cached_property
@@ -167,7 +168,7 @@ class SemanticModel:
 
         self.import_symbols()
 
-        self.queue.append_instruction(self.tree)
+        self.queue.append(self.tree)
         self.symbols.get(self.tree)
         while self.queue:
             node = self.queue.popleft()
@@ -179,8 +180,7 @@ class SemanticModel:
         for func in functions:
             if not func.is_abstract:
                 annotator = FlowAnnotator(self)
-                graph = annotator.annotate(func)
-                breakpoint()
+                annotator.annotate(func)
                 self.emit_function(func)
 
     def __repr__(self):
@@ -230,7 +230,7 @@ class SemanticScope(MutableMapping[SyntaxNode, Symbol]):
                 value = self.__constructor(key)
                 if value is not None:
                     self.__items[key] = value
-                    self.__model.queue.append_instruction(key)
+                    self.__model.queue.append(key)
                     return value
 
             # otherwise return it's from parent
@@ -809,17 +809,34 @@ class FunctionResolver(SemanticMixin):
         return None
 
 
-class FlowAnnotator(SemanticMixin):
-    def __init__(self, model: SemanticModel):
-        super().__init__(model)
+class FlowAnnotator:
+    def __init__(self, diagnostics):
+        self.__diagnostics = diagnostics
+        self.__graph = FlowGraph()
+        self.__builder = FlowBuilder(self.__graph)
 
-        self.graph = FlowGraph()
-        self.current_block = self.graph.append_block('entry', self.graph.enter_node)
+    @property
+    def graph(self) -> FlowGraph:
+        return self.__graph
+
+    @property
+    def diagnostics(self) -> DiagnosticManager:
+        return self.__diagnostics
+
+    @property
+    def builder(self) -> FlowBuilder:
+        return self.__builder
 
     def annotate(self, node: FunctionNode) -> FlowGraph:
         if not node.is_abstract:
             self.annotate_statement(node.statement)
-        return self.graph
+
+        # last exit
+        if self.builder.block and not self.builder.block.is_terminated:
+            self.builder.append_link(self.builder.exit_block)
+
+        graph = self.builder.graph
+        return graph
 
     def annotate_statement(self, node: StatementNode):
         if isinstance(node, BlockStatementNode):
@@ -830,6 +847,14 @@ class FlowAnnotator(SemanticMixin):
             return self.annotate_while_statement(node)
         elif isinstance(node, ConditionStatementNode):
             return self.annotate_condition_statement(node)
+        elif isinstance(node, ElseStatementNode):
+            return self.annotate_else_statement(node)
+        elif isinstance(node, FinallyStatementNode):
+            return self.annotate_finally_statement(node)
+        elif isinstance(node, ExpressionStatementNode):
+            return self.annotate_expression_statement(node)
+        elif isinstance(node, PassStatementNode):
+            return self.annotate_pass_statement(node)
 
         self.diagnostics.error(node.location, 'Not implemented control flow annotation for statement')
 
@@ -838,26 +863,105 @@ class FlowAnnotator(SemanticMixin):
             self.annotate_statement(child)
 
     def annotate_while_statement(self, node: WhileStatementNode):
-        # while True
-        #   ...
-        enter_loop = self.graph.append_block('while.enter', None)
-        then_loop = self.graph.append_block('while.then', None)
+        terminated_blocks = []
 
-        self.current_block = enter_loop
-        self.annotate_expression(node.condition)
-        self.current_block.append_exit(FlowNode(then_loop))
-        self.current_block.append_exit()
+        # loop start
+        start_block = self.builder.append_block('while.start')
+        self.builder.block.append_link(start_block)
 
-        pass
+        # loop condition
+        self.builder.block = start_block
+        with self.builder.block_helper('while.cond'):
+            self.annotate_expression(node.condition)
+
+        cond_block = self.builder.block
+        assert cond_block, "Condition must continue execution of flow"
+
+        # loop then block
+        with self.builder.block_helper('while.then') as then_helper:
+            with self.with_loop(cond_block, break_block):
+                self.annotate_statement(node.then_statement)
+
+        if then_helper.exit_block:
+            self.builder.append_link(cond_block)
+
+        # loop else block
+        if node.else_statement:
+            self.builder.block = cond_block
+            with self.builder.block_helper('while.else') as else_helper:
+                self.annotate_statement(node.else_statement)
+            terminated_blocks.append(else_helper.exit_block)
+        else:
+            terminated_blocks.append(cond_block)
+
+        # TODO: break
+        # TODO: continue
+
+        # loop next block
+        terminated_blocks = [block for block in terminated_blocks if block]
+        if terminated_blocks:
+            next_block = self.builder.append_block('while.next')
+            for block in terminated_blocks:
+                block.append_link(next_block)
+            self.builder.block = next_block
+        else:
+            # Unreachable code
+            self.builder.unreachable()
 
     def annotate_condition_statement(self, node: ConditionStatementNode):
-        pass
+        terminated_blocks = []
+
+        # condition
+        self.annotate_expression(node.condition)
+        self.builder.append_instruction(node)
+        enter_block = self.builder.block
+        assert enter_block, "Condition must continue execution of flow"
+
+        # then block
+        self.builder.block = enter_block
+        with self.builder.block_helper('if.then') as then_helper:
+            self.annotate_statement(node.then_statement)
+        terminated_blocks.append(then_helper.exit_block)
+
+        # else block
+        if node.else_statement:
+            self.builder.block = enter_block
+            with self.builder.block_helper('if.else') as else_helper:
+                self.annotate_statement(node.else_statement)
+            terminated_blocks.append(else_helper.exit_block)
+        else:
+            terminated_blocks.append(enter_block)
+
+        # next block
+        terminated_blocks = [block for block in terminated_blocks if block]
+        if terminated_blocks:
+            next_block = self.builder.append_block('if.next')
+            for block in terminated_blocks:
+                block.append_link(next_block)
+            self.builder.block = next_block
+        else:
+            # Unreachable code
+            self.builder.unreachable()
+
+    def annotate_else_statement(self, node: ElseStatementNode):
+        return self.annotate_statement(node.statement)
+
+    def annotate_finally_statement(self, node: FinallyStatementNode):
+        return self.annotate_statement(node.statement)
+
+    def annotate_expression_statement(self, node: ExpressionStatementNode):
+        return self.annotate_expression(node.value)
+
+    def annotate_pass_statement(self, node: PassStatementNode):
+        pass  # skip
 
     def annotate_return_statement(self, node: ReturnStatementNode):
         if node.value:
             self.annotate_expression(node.value)
 
-        self.current_block.exit_node = self.graph.exit_node
+        self.builder.append_instruction(node)
+        self.builder.append_link(self.builder.exit_block)
+        self.builder.unreachable()
 
     def annotate_expression(self, node: ExpressionNode):
         if isinstance(node, IntegerExpressionNode):
@@ -870,13 +974,13 @@ class FlowAnnotator(SemanticMixin):
         self.diagnostics.error(node.location, 'Not implemented control flow annotation for statement')
 
     def annotate_integer_expression(self, node: IntegerExpressionNode):
-        self.current_block.append_instruction(node)
+        self.builder.append_instruction(node)
 
     def annotate_string_expression(self, node: StringExpressionNode):
-        self.current_block.append_instruction(node)
+        self.builder.append_instruction(node)
 
     def annotate_named_expression(self, node: NamedExpressionNode):
-        self.current_block.append_instruction(node)
+        self.builder.append_instruction(node)
 
 
 class FunctionAnnotator(ExpressionAnnotator):

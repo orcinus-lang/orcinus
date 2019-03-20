@@ -4,6 +4,7 @@
 # of the MIT license.  See the LICENSE file for details.
 from __future__ import annotations
 
+import itertools
 from typing import MutableMapping, Callable, Iterator, TypeVar
 
 K = TypeVar('K')
@@ -43,3 +44,24 @@ class LazyDictionary(MutableMapping[K, V]):
 
     def __contains__(self, key: K) -> bool:
         return key in self.__items
+
+
+class NamedScope:
+    def __init__(self):
+        self.__names = set()
+
+    def add(self, original: str = None, previous=None) -> str:
+        if previous and previous in self.__names:
+            self.__names.remove(previous)
+
+        counter = itertools.count()
+
+        name = original
+        while not name or name in self.__names:
+            if original:
+                name = '{}.{}'.format(original, next(counter))
+            else:
+                name = str(next(counter))
+
+        self.__names.add(name)
+        return name

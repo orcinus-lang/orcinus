@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import contextlib
+import io
 from collections import deque as Queue
 from typing import Set, MutableSequence, Tuple
 
@@ -1757,3 +1758,4 @@ class Parser:
 
         token = lower_bound or upper_bound or stride or self.current_token
         return SliceArgumentNode(self.context, lower_bound, upper_bound, stride, token.location)
+

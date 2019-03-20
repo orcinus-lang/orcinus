@@ -5,11 +5,11 @@
 from __future__ import annotations
 
 import abc
-import itertools
 import weakref
 from io import StringIO
 from typing import cast, Sequence, Optional, Set
 
+from orcinus.collections import NamedScope
 from orcinus.diagnostics import DiagnosticManager
 from orcinus.locations import Location
 from orcinus.signals import Signal
@@ -750,7 +750,7 @@ class Function(GenericSymbol, Value):
         self.__owner = owner
         self.__name = name
         self.__blocks = []
-        self.__scope = FunctionScope()
+        self.__scope = NamedScope()
         self.__attributes = []
         self.__definition = None
         self.__generic_parameters = []
@@ -822,7 +822,7 @@ class Function(GenericSymbol, Value):
         return self.__blocks[2] if self.__blocks else None
 
     @property
-    def scope(self) -> FunctionScope:
+    def scope(self) -> NamedScope:
         return self.__scope
 
     def add_generic(self, generic: GenericType):
@@ -910,27 +910,6 @@ class Overload(Named):
     @property
     def functions(self) -> Sequence[Function]:
         return self.__functions
-
-
-class FunctionScope:
-    def __init__(self):
-        self.__names = set()
-
-    def add(self, original: str = None, previous=None) -> str:
-        if previous and previous in self.__names:
-            self.__names.remove(previous)
-
-        counter = itertools.count()
-
-        name = original
-        while not name or name in self.__names:
-            if original:
-                name = '{}.{}'.format(original, next(counter))
-            else:
-                name = str(next(counter))
-
-        self.__names.add(name)
-        return name
 
 
 class IntegerConstant(Value):

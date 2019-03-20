@@ -4,67 +4,128 @@
 # of the MIT license.  See the LICENSE file for details.
 from __future__ import annotations
 
-from typing import Sequence
+import contextlib
+import weakref
+from typing import Sequence, Optional, Set
 
-from orcinus.syntax import ExpressionNode
+from orcinus.collections import NamedScope
+from orcinus.syntax import SyntaxNode
+from orcinus.utils import cached_property
 
 
 class FlowGraph:
     def __init__(self):
         self.__blocks = []
-        self.__enter_node = FlowNode()
-        self.__exit_node = FlowNode()
+        self.__scope = NamedScope()
+        self.__enter_block = self.append_block('entry')
+        self.__exit_block = FlowBlock(self, ':exit')
 
     @property
-    def enter_node(self) -> FlowNode:
-        return self.__enter_node
+    def scope(self) -> NamedScope:
+        return self.__scope
 
     @property
-    def exit_node(self) -> FlowNode:
-        return self.__exit_node
+    def enter_block(self) -> FlowBlock:
+        return self.__enter_block
+
+    @property
+    def exit_block(self) -> FlowBlock:
+        return self.__exit_block
+
+    @property
+    def throw_block(self) -> FlowBlock:
+        return self.__throw_block
 
     @property
     def blocks(self) -> Sequence[FlowBlock]:
         return self.__blocks
 
-    def append_block(self, name: str, enter_node: FlowNode) -> FlowBlock:
-        block = FlowBlock(name, enter_node)
+    def append_block(self, name: str) -> FlowBlock:
+        block = FlowBlock(self, self.scope.add(name))
         self.__blocks.append(block)
         return block
 
 
-class FlowNode:
-    pass
+class FlowEdge:
+    __parent: weakref.ReferenceType
+    __successor: weakref.ReferenceType
+
+    def __init__(self, parent: FlowBlock, successor: FlowBlock):
+        self.__parent = weakref.ref(parent)
+        self.__successor = weakref.ref(successor)
+
+    @property
+    def parent(self) -> FlowBlock:
+        return self.__parent()
+
+    @property
+    def successor(self) -> FlowBlock:
+        return self.__successor()
+
+    def __str__(self):
+        return f'{self.parent.name} -> {self.successor.name}'
+
+    def __repr__(self):
+        return f'{type(self).__name__}: {self}'
 
 
 class FlowBlock:
-    def __init__(self, name: str, enter_node: FlowNode):
+    def __init__(self, graph: FlowGraph, name: str):
+        self.__graph = weakref.ref(graph)
         self.__name = name
-        self.__enter_nodes = [enter_node]
-        self.__exit_node = None
+        self.__enter_edges = []
+        self.__exit_edges = []
         self.__instructions = []
+
+    @property
+    def graph(self) -> FlowGraph:
+        return self.__graph()
 
     @property
     def name(self) -> str:
         return self.__name
 
-    @property
-    def enter_nodes(self) -> Sequence[FlowNode]:
-        return self.__enter_nodes
+    @name.setter
+    def name(self, value: str):
+        self.__name = self.graph.scope.add(value, self.__name)
 
     @property
-    def exit_node(self) -> FlowNode:
-        return self.__exit_node
-
-    @exit_node.setter
-    def exit_node(self, value: FlowNode):
-        self.__exit_node = value
+    def enter_edges(self) -> Sequence[FlowEdge]:
+        return self.__enter_edges
 
     @property
-    def instructions(self) -> Sequence[ExpressionNode]:
+    def exit_edges(self) -> Sequence[FlowEdge]:
+        return self.__exit_edges
+
+    @property
+    def predecessor(self) -> Set[FlowBlock]:
+        return {edge.parent for edge in self.enter_edges}
+
+    @property
+    def successors(self) -> Set[FlowBlock]:
+        return {edge.successor for edge in self.exit_edges}
+
+    @property
+    def is_terminated(self) -> bool:
+        return bool(self.exit_edges)
+
+    @property
+    def is_succeeded(self) -> bool:
+        return bool(self.enter_edges)
+
+    @property
+    def instructions(self) -> Sequence[SyntaxNode]:
         return self.__instructions
 
-    def append_instruction(self, node: ExpressionNode):
+    def append_link(self, block: FlowBlock):
+        assert block
+
+        edge = FlowEdge(self, block)
+        self.__exit_edges.append(edge)
+        block.__enter_edges.append(edge)
+        return edge
+
+    def append_instruction(self, node: SyntaxNode):
         self.__instructions.append(node)
 
     def __str__(self):
@@ -72,3 +133,64 @@ class FlowBlock:
 
     def __repr__(self):
         return f'{type(self).__name__}: {self}'
+
+
+class FlowBuilder:
+    def __init__(self, graph: FlowGraph):
+        self.__graph = graph
+        self.__block = graph.enter_block
+
+    @property
+    def graph(self) -> FlowGraph:
+        return self.__graph
+
+    @property
+    def exit_block(self) -> FlowBlock:
+        return self.__graph.exit_block
+
+    @property
+    def block(self) -> Optional[FlowBlock]:
+        return self.__block
+
+    @block.setter
+    def block(self, block: Optional[FlowBlock]):
+        self.__block = block
+
+    @cached_property
+    def unreached_block(self) -> FlowBlock:
+        return self.append_block(':unreached')
+
+    @property
+    def required_block(self) -> FlowBlock:
+        if not self.__block:
+            self.__block = self.unreached_block
+        return self.block
+
+    def append_block(self, name: str):
+        return self.graph.append_block(name)
+
+    def append_instruction(self, node: SyntaxNode):
+        self.required_block.append_instruction(node)
+
+    def append_link(self, block: FlowBlock):
+        return self.required_block.append_link(block)
+
+    def unreachable(self):
+        self.__block = None
+
+    @contextlib.contextmanager
+    def block_helper(self, name: str):
+        helper = FlowHelper(self.append_block(name))
+        self.append_link(helper.enter_block)
+
+        self.block = helper.enter_block
+        yield helper
+        helper.exit_block = self.block
+
+
+class FlowHelper:
+    enter_block: FlowBlock
+    exit_block: Optional[FlowBlock]
+
+    def __init__(self, enter_block):
+        self.exit_block = self.enter_block = enter_block
