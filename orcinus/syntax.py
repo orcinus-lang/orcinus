@@ -729,7 +729,7 @@ class ParameterNode(SyntaxNode):
         return f'{self.name}: {self.type} [{self.location}]'
 
 
-class EnumMemberNode(MemberNode):
+class EnumValueNode(MemberNode):
     token_name: SyntaxToken
     token_equal: SyntaxToken
     token_ellipsis: Optional[SyntaxToken]
@@ -743,7 +743,7 @@ class EnumMemberNode(MemberNode):
                  token_ellipsis: Optional[SyntaxToken],
                  value: Optional[ExpressionNode],
                  token_newline: SyntaxToken):
-        super(EnumMemberNode, self).__init__(context)
+        super(EnumValueNode, self).__init__(context)
 
         self.token_name = token_name
         self.token_equal = token_equal
@@ -2272,27 +2272,47 @@ class DictArgumentNode(SyntaxNode):
 class ArgumentNode(SyntaxNode, abc.ABC):
     value: ExpressionNode
 
-    def __init__(self, context: SyntaxContext, value: ExpressionNode, location: Location):
+    def __init__(self, context: SyntaxContext, value: ExpressionNode):
         super(ArgumentNode, self).__init__(context)
 
         self.value = value
+
+
+class PositionArgumentNode(ArgumentNode):
+    @property
+    def location(self) -> Location:
+        return self.value.location
 
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
         return [self.value]
 
 
-class PositionArgumentNode(ArgumentNode):
-    pass
-
-
 class KeywordArgumentNode(ArgumentNode):
-    name: str
+    token_name: SyntaxToken
+    token_equal: SyntaxToken
 
-    def __init__(self, context: SyntaxContext, name: str, value: ExpressionNode, location: Location):
-        super(KeywordArgumentNode, self).__init__(context, value, location)
+    def __init__(self,
+                 context: SyntaxContext,
+                 token_name: SyntaxToken,
+                 token_equal: SyntaxToken,
+                 value: ExpressionNode):
+        super(KeywordArgumentNode, self).__init__(context, value)
 
-        self.name = name
+        self.token_name = token_name
+        self.token_equal = token_equal
+
+    @property
+    def name(self) -> str:
+        return self.token_name.value
+
+    @property
+    def location(self) -> Location:
+        return self.token_name.location
+
+    @property
+    def children(self) -> Sequence[SyntaxSymbol]:
+        return [self.token_name, self.token_equal, self.value]
 
 
 class SliceArgumentNode(SyntaxNode, abc.ABC):
@@ -2371,7 +2391,7 @@ class AbstractMemberVisitor(Generic[R], abc.ABC):
     def visit_pass_member(self, node: PassMemberNode) -> R:
         return self.visit_member(node)
 
-    def visit_enum_member(self, node: EnumMemberNode) -> R:
+    def visit_enum_value(self, node: EnumValueNode) -> R:
         return self.visit_member(node)
 
     def visit_field(self, node: FieldNode) -> R:
@@ -2400,8 +2420,8 @@ class MemberVisitor(AbstractMemberVisitor[R], abc.ABC):
     def visit(self, node: MemberNode) -> R:
         if isinstance(node, PassMemberNode):
             return self.visit_pass_member(node)
-        elif isinstance(node, EnumMemberNode):
-            return self.visit_enum_member(node)
+        elif isinstance(node, EnumValueNode):
+            return self.visit_enum_value(node)
         elif isinstance(node, FieldNode):
             return self.visit_field(node)
         elif isinstance(node, FunctionNode):
@@ -2514,6 +2534,8 @@ class StatementVisitor(AbstractStatementVisitor[R], abc.ABC):
             return self.visit_with_statement(node)
         elif isinstance(node, BlockStatementNode):
             return self.visit_block_statement(node)
+        elif isinstance(node, ExpressionStatementNode):
+            return self.visit_expression_statement(node)
 
         raise DiagnosticError(node.location, f"Not implemented visitor for {type(node).__name__}")
 
@@ -2653,6 +2675,8 @@ class NodeVisitor(Generic[R],
             return self.visit_with_statement(node)
         elif isinstance(node, BlockStatementNode):
             return self.visit_block_statement(node)
+        elif isinstance(node, ExpressionStatementNode):
+            return self.visit_expression_statement(node)
         elif isinstance(node, IntegerExpressionNode):
             return self.visit_integer_expression(node)
         elif isinstance(node, StringExpressionNode):
@@ -2685,8 +2709,8 @@ class NodeVisitor(Generic[R],
             return self.visit_dict_expression(node)
         elif isinstance(node, PassMemberNode):
             return self.visit_pass_member(node)
-        elif isinstance(node, EnumMemberNode):
-            return self.visit_enum_member(node)
+        elif isinstance(node, EnumValueNode):
+            return self.visit_enum_value(node)
         elif isinstance(node, FieldNode):
             return self.visit_field(node)
         elif isinstance(node, FunctionNode):

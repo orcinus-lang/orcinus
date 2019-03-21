@@ -8,7 +8,6 @@ import contextlib
 from collections import deque as Queue
 from typing import Set, MutableSequence, Tuple
 
-from orcinus.exceptions import DiagnosticError
 from orcinus.scanner import Scanner
 from orcinus.syntax import *
 
@@ -619,7 +618,7 @@ class Parser:
         self.error(NAMED_MEMBER_STARTS)
         return None
 
-    def parse_enum_member(self, token_name: SyntaxToken) -> EnumMemberNode:
+    def parse_enum_member(self, token_name: SyntaxToken) -> EnumValueNode:
         # """
         # enum_member:
         #     Name '=' '...'
@@ -633,7 +632,7 @@ class Parser:
             token_ellipsis = None
             value = self.parse_expression()
         token_newline = self.consume(TokenID.NewLine)
-        return EnumMemberNode(self.context, token_name, token_equal, token_ellipsis, value, token_newline)
+        return EnumValueNode(self.context, token_name, token_equal, token_ellipsis, value, token_newline)
 
     def parse_field_member(self, token_name: SyntaxToken) -> FieldNode:
         # """
@@ -1212,13 +1211,13 @@ class Parser:
         if self.match(TokenID.Name):
             token_name = self.consume()
             if self.match(TokenID.Equal):
-                self.consume()
+                token_equal = self.consume()
                 value = self.parse_expression()
-                return KeywordArgumentNode(self.context, token_name.value, value, token_name.location)
+                return KeywordArgumentNode(self.context, token_name, token_equal, value)
             self.unput(token_name)
 
         value = self.parse_expression()
-        return PositionArgumentNode(self.context, value, value.location)
+        return PositionArgumentNode(self.context, value)
 
     def parse_target_list(self) -> ExpressionNode:
         # """

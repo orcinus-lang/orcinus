@@ -171,8 +171,8 @@ class SemanticModel:
         self.queue.append(self.tree)
         self.symbols.get(self.tree)
         while self.queue:
-            node = self.queue.popleft()
-            self.initialize(node)
+            child = self.queue.popleft()
+            self.initialize(child)
 
         functions: Sequence[FunctionNode] = list(
             self.tree.find_descendants(lambda node: isinstance(node, FunctionNode))
@@ -180,7 +180,7 @@ class SemanticModel:
         for func in functions:
             if not func.is_abstract:
                 annotator = FlowAnnotator(self.diagnostics)
-                annotator.annotate(func)
+                graph = annotator.annotate(func)
                 self.emit_function(func)
 
     def __repr__(self):
@@ -321,7 +321,7 @@ class SemanticInitializer(SemanticMixin):
 
         # insert attributes
         for attr in [self.symbols[decorator] for decorator in node.decorators]:
-            type.add_attribute(attr)
+            type.add_attribute(cast(Attribute, attr))
 
         for child in node.members:
             member: Optional[Symbol] = self.symbols[child]
@@ -386,7 +386,7 @@ class ExpressionAnnotator(SemanticAnnotator):
     def annotate(self, node: SyntaxNode) -> Optional[Symbol]:
         if isinstance(node, ExpressionNode):
             return self.annotate_expression(node)
-        return None
+        return super().annotate(node)
 
     def annotate_expression(self, node: ExpressionNode) -> Symbol:
         if isinstance(node, IntegerExpressionNode):
@@ -413,7 +413,7 @@ class ExpressionAnnotator(SemanticAnnotator):
             return self.annotate_subscribe_expression(node)
 
         self.diagnostics.error(node.location, 'Not implemented expression')
-        return ErrorValue(self.model, node.location)
+        return ErrorValue(self.module, node.location)
 
     def annotate_integer_expression(self, node: IntegerExpressionNode) -> Symbol:
         return IntegerConstant(self.symbol_context, int(node.value), location=node.location)
@@ -518,17 +518,17 @@ class StaticAnnotator(ExpressionAnnotator):
             return self.symbols[node]
 
         if isinstance(parent, Module):
-            return ModuleMemberAnnotator(self.model, parent).annotate_member(node)
+            return ModuleMemberAnnotator(self.model, parent).visit(node)
         elif isinstance(parent, ClassType):
-            return ClassMemberAnnotator(self.model, parent).annotate_member(node)
+            return ClassMemberAnnotator(self.model, parent).visit(node)
         elif isinstance(parent, StructType):
-            return StructMemberAnnotator(self.model, parent).annotate_member(node)
+            return StructMemberAnnotator(self.model, parent).visit(node)
         elif isinstance(parent, InterfaceType):
-            return InterfaceMemberAnnotator(self.model, parent).annotate_member(node)
+            return InterfaceMemberAnnotator(self.model, parent).visit(node)
         elif isinstance(parent, EnumType):
-            return EnumMemberAnnotator(self.model, parent).annotate_member(node)
+            return EnumMemberAnnotator(self.model, parent).visit(node)
         elif isinstance(parent, Type):
-            return TypeMemberAnnotator(self.model, parent).annotate_member(node)
+            return TypeMemberAnnotator(self.model, parent).visit(node)
 
         self.diagnostics.error(parent.location, 'Not implemented parent')
         return None
@@ -538,7 +538,7 @@ class StaticAnnotator(ExpressionAnnotator):
         return Overload(self.module, node.name, cast(Sequence[Function], functions), location=node.location)
 
 
-class ParentMemberAnnotator(SemanticAnnotator):
+class ParentMemberAnnotator(SemanticAnnotator, MemberVisitor[Optional[Symbol]]):
     def __init__(self, model: SemanticModel, parent: Container):
         super().__init__(model)
 
@@ -548,26 +548,13 @@ class ParentMemberAnnotator(SemanticAnnotator):
     def parent(self) -> Container:
         return self.__parent
 
-    def annotate_member(self, node: MemberNode) -> Optional[Symbol]:
-        # symbols that don't have a parent
-        if isinstance(node, FunctionNode):
-            return self.annotate_function(node)
-        elif isinstance(node, ClassNode):
-            return self.annotate_class(node)
-        elif isinstance(node, StructNode):
-            return self.annotate_struct(node)
-        elif isinstance(node, InterfaceNode):
-            return self.annotate_interface(node)
-        elif isinstance(node, EnumNode):
-            return self.annotate_enum(node)
-        elif isinstance(node, FieldNode):
-            return self.annotate_field(node)
-        elif isinstance(node, EnumMemberNode):
-            return self.annotate_enum_value(node)
-        elif isinstance(node, PassMemberNode):
-            return None
+    def visit_member(self, node: MemberNode):
+        self.diagnostics.error(node.location, f"Not implemented emitting symbols for statement: {type(node).__name__}")
 
-    def annotate_function(self, node: FunctionNode) -> Symbol:
+    def visit_pass_member(self, node: PassMemberNode):
+        pass
+
+    def visit_function(self, node: FunctionNode) -> Function:
         # if function is method of struct/class/interface and first arguments type is auto, then it type can
         # be inferred to owner type
         if isinstance(self.parent, Type) and node.parameters and isinstance(node.parameters[0].type, AutoTypeNode):
@@ -595,14 +582,14 @@ class ParentMemberAnnotator(SemanticAnnotator):
         # assert node not in self.symbols
         return func
 
-    def annotate_class(self, node: ClassNode) -> Type:
+    def visit_class(self, node: ClassNode) -> Type:
         if self.module == self.symbol_context.builtins_module:
             if node.name == TYPE_STRING_NAME:
                 return StringType(self.parent, location=node.location)
 
         return ClassType(self.parent, node.name, location=node.location)
 
-    def annotate_struct(self, node: StructNode) -> Type:
+    def visit_struct(self, node: StructNode) -> Type:
         if self.module == self.symbol_context.builtins_module:
             if node.name == TYPE_INTEGER_NAME:
                 return IntegerType(self.parent, location=node.location)
@@ -613,21 +600,13 @@ class ParentMemberAnnotator(SemanticAnnotator):
 
         return StructType(self.parent, node.name, location=node.location)
 
-    def annotate_enum(self, node: EnumNode) -> Type:
+    def visit_enum(self, node: EnumNode) -> Type:
         if node.generic_parameters:
             self.diagnostics.error(node.location, 'Generic types is not implemented')
         return EnumType(self.parent, node.name, location=node.location)
 
-    def annotate_interface(self, node: InterfaceNode) -> Type:
+    def visit_interface(self, node: InterfaceNode) -> Type:
         return InterfaceType(self.parent, node.name, location=node.location)
-
-    def annotate_field(self, node: FieldNode) -> Optional[Symbol]:
-        self.diagnostics.error(node.location, 'Not implemented in current context')
-        return None
-
-    def annotate_enum_value(self, node: EnumMemberNode) -> Optional[Symbol]:
-        self.diagnostics.error(node.location, 'Not implemented in current context')
-        return None
 
 
 class ModuleMemberAnnotator(ParentMemberAnnotator):
@@ -642,14 +621,14 @@ class TypeMemberAnnotator(ParentMemberAnnotator):
         return cast(Type, super().parent)
 
     def create_property_field(self, node: FieldNode) -> Field:
-        field_type = self.symbols[node.type].as_type(node.type.location)
+        field_type = self.as_type(node.type)
         field = Field(self.parent, node.name, field_type, node.location)
 
         self.parent.add_member(field)
         return field
 
-    def create_property_getter(self, node: FieldNode, field: Field = None) -> Function:
-        prop_type = self.symbols[node.type].as_type(node.type.location)
+    def create_property_getter(self, node: FieldNode, _: Field = None) -> Function:
+        prop_type = self.as_type(node.type)
         getter_type = FunctionType(self.module, [self.parent], prop_type, node.location)
         getter_func = Function(self.parent, node.name, getter_type, node.location)
         getter_func.parameters[0].name = 'self'
@@ -657,8 +636,8 @@ class TypeMemberAnnotator(ParentMemberAnnotator):
         self.parent.add_member(getter_func)
         return getter_func
 
-    def create_property_setter(self, node: FieldNode, field: Field = None) -> Function:
-        prop_type = self.symbols[node.type].as_type(node.type.location)
+    def create_property_setter(self, node: FieldNode, _: Field = None) -> Function:
+        prop_type = self.as_type(node.type)
         setter_type = FunctionType(self.module, [self.parent, prop_type], self.symbol_context.void_type, node.location)
         setter_func = Function(self.parent, node.name, setter_type, node.location)
         setter_func.parameters[0].name = 'self'
@@ -673,7 +652,7 @@ class StructMemberAnnotator(TypeMemberAnnotator):
     def parent(self) -> StructType:
         return cast(StructType, super().parent)
 
-    def annotate_field(self, node: FieldNode) -> Property:
+    def visit_field(self, node: FieldNode) -> Property:
         field = self.create_property_field(node)
         getter_func = self.create_property_getter(node, field)
         setter_func = self.create_property_setter(node, field)
@@ -685,7 +664,7 @@ class ClassMemberAnnotator(TypeMemberAnnotator):
     def parent(self) -> ClassType:
         return cast(ClassType, super().parent)
 
-    def annotate_field(self, node: FieldNode) -> Property:
+    def visit_field(self, node: FieldNode) -> Property:
         field = self.create_property_field(node)
         getter_func = self.create_property_getter(node, field)
         setter_func = self.create_property_setter(node, field)
@@ -697,7 +676,7 @@ class InterfaceMemberAnnotator(TypeMemberAnnotator):
     def parent(self) -> InterfaceType:
         return cast(InterfaceType, super().parent)
 
-    def annotate_field(self, node: FieldNode) -> Property:
+    def visit_field(self, node: FieldNode) -> Property:
         getter_func = self.create_property_getter(node)
         setter_func = self.create_property_setter(node)
         return Property(self.parent, node.name, getter_func, setter_func, location=node.location)
@@ -708,11 +687,11 @@ class EnumMemberAnnotator(TypeMemberAnnotator):
     def parent(self) -> EnumType:
         return cast(EnumType, super().parent)
 
-    def annotate_enum_value(self, node: EnumMemberNode) -> Optional[Symbol]:
+    def visit_enum_value(self, node: EnumValueNode) -> Optional[Symbol]:
         value = node.parent.members.index(node)
         if node.value:
             expr = self.symbols[node.value]
-            if isinstance(expr, IntegerConstant):
+            if not isinstance(expr, IntegerConstant):
                 value = expr.value
             else:
                 self.diagnostics.error(node.location, "Enumeration values must have integer value or ‘...’")
@@ -839,34 +818,49 @@ class FlowAnnotator:
         return graph
 
     def annotate_statement(self, node: StatementNode):
-        if isinstance(node, BlockStatementNode):
-            return self.annotate_block_statement(node)
-        elif isinstance(node, ReturnStatementNode):
-            return self.annotate_return_statement(node)
-        elif isinstance(node, WhileStatementNode):
-            return self.annotate_while_statement(node)
-        elif isinstance(node, ConditionStatementNode):
-            return self.annotate_condition_statement(node)
-        elif isinstance(node, ElseStatementNode):
-            return self.annotate_else_statement(node)
-        elif isinstance(node, FinallyStatementNode):
-            return self.annotate_finally_statement(node)
-        elif isinstance(node, ExpressionStatementNode):
-            return self.annotate_expression_statement(node)
-        elif isinstance(node, PassStatementNode):
-            return self.annotate_pass_statement(node)
-        elif isinstance(node, ContinueStatementNode):
-            return self.annotate_continue_statement(node)
-        elif isinstance(node, BreakStatementNode):
-            return self.annotate_break_statement(node)
+        annotator = FlowStatementAnnotator(self)
+        return annotator.annotate_statement(node)
 
+    def annotate_expression(self, node: ExpressionNode):
+        annotator = FlowExpressionAnnotator(self)
+        return annotator.annotate_expression(node)
+
+
+class FlowMixin:
+    def __init__(self, parent: FlowAnnotator):
+        self.parent = parent
+
+    @property
+    def graph(self) -> FlowGraph:
+        return self.parent.graph
+
+    @property
+    def diagnostics(self) -> DiagnosticManager:
+        return self.parent.diagnostics
+
+    @property
+    def builder(self) -> FlowBuilder:
+        return self.parent.builder
+
+    def annotate_statement(self, node: StatementNode):
+        return self.parent.annotate_statement(node)
+
+    def annotate_expression(self, node: ExpressionNode):
+        return self.parent.annotate_expression(node)
+
+
+class FlowStatementAnnotator(FlowMixin, StatementVisitor[None]):
+    def annotate_statement(self, node: StatementNode):
+        return self.visit(node)
+
+    def visit_statement(self, node: StatementNode):
         self.diagnostics.error(node.location, 'Not implemented control flow annotation for statement')
 
-    def annotate_block_statement(self, node: BlockStatementNode):
+    def visit_block_statement(self, node: BlockStatementNode):
         for child in node.statements:
             self.annotate_statement(child)
 
-    def annotate_while_statement(self, node: WhileStatementNode):
+    def visit_while_statement(self, node: WhileStatementNode):
         terminated_blocks = []
 
         # loop start
@@ -914,7 +908,7 @@ class FlowAnnotator:
             # Unreachable code
             self.builder.unreachable()
 
-    def annotate_condition_statement(self, node: ConditionStatementNode):
+    def visit_condition_statement(self, node: ConditionStatementNode):
         terminated_blocks = []
 
         # condition
@@ -949,19 +943,20 @@ class FlowAnnotator:
             # Unreachable code
             self.builder.unreachable()
 
-    def annotate_else_statement(self, node: ElseStatementNode):
+    def visit_else_statement(self, node: ElseStatementNode):
         return self.annotate_statement(node.statement)
 
-    def annotate_finally_statement(self, node: FinallyStatementNode):
+    def visit_finally_statement(self, node: FinallyStatementNode):
         return self.annotate_statement(node.statement)
 
-    def annotate_expression_statement(self, node: ExpressionStatementNode):
-        return self.annotate_expression(node.value)
+    def visit_expression_statement(self, node: ExpressionStatementNode):
+        self.annotate_expression(node.value)
+        self.builder.append_instruction(node)
 
-    def annotate_pass_statement(self, node: PassStatementNode):
+    def visit_pass_statement(self, node: PassStatementNode):
         pass  # skip
 
-    def annotate_return_statement(self, node: ReturnStatementNode):
+    def visit_return_statement(self, node: ReturnStatementNode):
         if node.value:
             self.annotate_expression(node.value)
 
@@ -969,26 +964,7 @@ class FlowAnnotator:
         self.builder.append_link(self.builder.exit_block)
         self.builder.unreachable()
 
-    def annotate_expression(self, node: ExpressionNode):
-        if isinstance(node, IntegerExpressionNode):
-            return self.annotate_integer_expression(node)
-        elif isinstance(node, StringExpressionNode):
-            return self.annotate_string_expression(node)
-        elif isinstance(node, NamedExpressionNode):
-            return self.annotate_named_expression(node)
-
-        self.diagnostics.error(node.location, 'Not implemented control flow annotation for statement')
-
-    def annotate_integer_expression(self, node: IntegerExpressionNode):
-        self.builder.append_instruction(node)
-
-    def annotate_string_expression(self, node: StringExpressionNode):
-        self.builder.append_instruction(node)
-
-    def annotate_named_expression(self, node: NamedExpressionNode):
-        self.builder.append_instruction(node)
-
-    def annotate_continue_statement(self, node: ContinueStatementNode):
+    def visit_continue_statement(self, node: ContinueStatementNode):
         if self.builder.continue_block:
             self.builder.append_link(self.builder.continue_block)
         else:
@@ -996,13 +972,41 @@ class FlowAnnotator:
 
         self.builder.unreachable()
 
-    def annotate_break_statement(self, node: BreakStatementNode):
+    def visit_break_statement(self, node: BreakStatementNode):
         if self.builder.break_block:
             self.builder.append_link(self.builder.break_block)
         else:
             self.diagnostics.error(node.location, "‘break’ is outside of loop")
 
         self.builder.unreachable()
+
+    def visit_assign_statement(self, node: AssignStatementNode):
+        self.annotate_expression(node.source)
+        self.annotate_expression(node.target)
+        self.builder.append_instruction(node)
+
+
+class FlowExpressionAnnotator(FlowMixin, ExpressionVisitor[None]):
+    def annotate_expression(self, node: ExpressionNode):
+        return self.visit(node)
+
+    def visit_expression(self, node: ExpressionNode):
+        self.diagnostics.error(node.location, 'Not implemented control flow annotation for statement')
+
+    def visit_integer_expression(self, node: IntegerExpressionNode):
+        self.builder.append_instruction(node)
+
+    def visit_string_expression(self, node: StringExpressionNode):
+        self.builder.append_instruction(node)
+
+    def visit_named_expression(self, node: NamedExpressionNode):
+        self.builder.append_instruction(node)
+
+    def visit_attribute_expression(self, node: AttributeExpressionNode):
+        self.builder.append_instruction(node)
+
+    def visit_call_expression(self, node: CallExpressionNode):
+        self.builder.append_instruction(node)
 
 
 class FunctionEmitter(ExpressionAnnotator):
@@ -1091,16 +1095,9 @@ class FunctionStatementEmitter(FunctionMixin, StatementVisitor[None]):
     def visit_pass_statement(self, node: PassStatementNode):
         pass
 
-    def visit_return_statement(self, node: ReturnStatementNode) -> R:
-        location = node.location
-
-        if node.value:
-            value = self.as_value(node.value)
-            location = node.value.location
-        else:
-            value = NoneConstant(self.symbol_context, location)
-
-        self.parent.emit_return(value, location)
+    def visit_return_statement(self, node: ReturnStatementNode):
+        value = self.as_value(node.value) or NoneConstant(self.symbol_context, node.location)
+        self.parent.emit_return(value, value.location)
 
 
 class FunctionExpressionEmitter(FunctionMixin, ExpressionVisitor[Value]):

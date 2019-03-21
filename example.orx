@@ -1,2 +1,18 @@
+
+
+class Type:
+    a: int
+
+    def __init__(self, a: int):
+        self.a = a
+
+    def execute(self) -> int:
+        return test(self.a)
+
+
+def test(a: int) -> int:
+    return a
+
+
 def main() -> int:
-    return 1
+    return Type(10).execute()
