@@ -1028,21 +1028,40 @@ class BasicBlock:
         return self.__instructions
 
     @property
-    def is_terminated(self) -> bool:
+    def terminator(self) -> Optional[TerminatorInstruction]:
         if not self.instructions:
-            return False
-        return self.instructions[-1].is_terminator
+            return None
+
+        inst = self.instructions[-1]
+        return inst if inst.is_terminator else None
+
+    @property
+    def is_terminated(self) -> bool:
+        return bool(self.terminator)
 
     def append(self, inst: Instruction):
         if self.is_terminated:
-            raise RuntimeError(u'Can not add instruction to terminated block')
+            raise RuntimeError(u'Can not append instruction to terminated block')
 
-        elif inst.block:
+        elif inst.parent:
             raise RuntimeError(u'Can not move instruction from another block')
 
-        # inject instruction
-        inst.block = self
         self.__instructions.append(inst)
+        self.__inject(inst)
+
+    def insert(self, idx: int, inst: Instruction):
+        if self.is_terminated and isinstance(inst, TerminatorInstruction) and idx == len(self.instructions):
+            raise RuntimeError(u'Can not insert terminator instruction to terminated block')
+
+        elif inst.parent:
+            raise RuntimeError(u'Can not move instruction from another block')
+
+        self.__instructions.insert(idx, inst)
+        self.__inject(inst)
+
+    def __inject(self, inst: Instruction):
+        # inject instruction
+        inst.parent = self
 
         # successors and predecessor
         for block in inst.successors:
@@ -1060,7 +1079,7 @@ class BasicBlock:
         buffer.write(f"%{self.name}:")
 
         if self.predecessors:
-            buffer.write(' ;')
+            buffer.write(' ; ')
             for idx, previous in enumerate(self.predecessors):
                 if idx:
                     buffer.write(', ')
@@ -1094,17 +1113,17 @@ class Instruction(Value, abc.ABC):
         self.__name = self.owner.scope.add(value, self.__name) if self.owner else value
 
     @property
-    def block(self) -> Optional[BasicBlock]:
+    def parent(self) -> Optional[BasicBlock]:
         return self.__block
 
-    @block.setter
-    def block(self, value: Optional[BasicBlock]):
+    @parent.setter
+    def parent(self, value: Optional[BasicBlock]):
         self.__block = value
         self.__name = self.owner.scope.add(self.__name) if self.owner else self.__name
 
     @property
     def owner(self) -> Optional[Function]:
-        return self.block.owner if self.block else None
+        return self.parent.owner if self.parent else None
 
     @property
     def is_terminator(self) -> bool:
@@ -1241,7 +1260,7 @@ class ExtractValueInstruction(Instruction):
         self.field = field
 
     def as_inst(self) -> str:
-        return '{} = extractvalue {} {}'.format(self.as_val(), self.instance.as_val(), self.field.name)
+        return '{} = extractvalue {}.{}'.format(self.as_val(), self.instance.as_val(), self.field.name)
 
 
 class InsertValueInstruction(Instruction):
@@ -1254,12 +1273,13 @@ class InsertValueInstruction(Instruction):
         self.source = source
 
     def as_inst(self) -> str:
-        return 'insertvalue {} {} {}'.format(self, self.instance.as_val(), self.field.name, self.source.as_val())
+        return 'insertvalue {}.{} {}'.format(self.instance.as_val(), self.field.name, self.source.as_val())
 
 
 class IRBuilder:
     def __init__(self, block: BasicBlock):
         self.__block = block
+        self.__anchor = len(block.instructions)
 
     @property
     def context(self) -> SymbolContext:
@@ -1283,11 +1303,18 @@ class IRBuilder:
 
     @contextlib.contextmanager
     def goto_block(self, block: BasicBlock):
-        # TODO: Position before terminated instruction.
         old_block = self.block
-        self.position_at(block)
-        yield block
-        self.position_at(old_block)
+        if block.terminator:
+            self.position_before(block.terminator)
+        else:
+            self.position_at_end(block)
+        yield
+        self.position_at_end(old_block)
+
+    @contextlib.contextmanager
+    def goto_entry_block(self):
+        with self.goto_block(self.function.entry_block):
+            yield
 
     def get_default_value(self, value_type: Type, *, location: Location):
         if isinstance(value_type, BooleanType):
@@ -1303,12 +1330,38 @@ class IRBuilder:
     def append_basic_block(self, name: str) -> BasicBlock:
         return self.function.append_basic_block(name)
 
-    def position_at(self, block: BasicBlock):
+    def position_before(self, inst: Instruction):
+        self.__block = inst.parent
+        self.__anchor = self.__block.instructions.index(inst)
+
+    def position_after(self, inst: Instruction):
+        """
+        Position immediately after the given instruction.  The current block
+        is also changed to the instruction's basic block.
+        """
+        assert isinstance(inst, Instruction)
+        self.__block = inst.parent
+        self.__anchor = self.__block.instructions.index(inst) + 1
+
+    def position_at_start(self, block):
+        """
+        Position at the start of the basic *block*.
+        """
         assert isinstance(block, BasicBlock)
         self.__block = block
+        self.__anchor = 0
+
+    def position_at_end(self, block: BasicBlock):
+        """
+        Position at the end of the basic *block*.
+        """
+        assert isinstance(block, BasicBlock)
+        self.__block = block
+        self.__anchor = len(block.instructions)
 
     def __append(self, inst: Instruction) -> Instruction:
-        self.block.append(inst)
+        self.__block.insert(self.__anchor, inst)
+        self.__anchor += 1
         return inst
 
     def alloca(self, value_type: Type, *, name: str = None, location: Location) -> Instruction:

@@ -113,7 +113,7 @@ def process_pdb(action):
     return wrapper
 
 
-def compile_module(filename: str, *, output=sys.stdout):
+def compile_module(filename: str) -> int:
     # initialize workspace context
     workspace = Workspace(paths=[os.getcwd()])
     document = workspace.get_or_create_document(filename)
@@ -125,7 +125,8 @@ def compile_module(filename: str, *, output=sys.stdout):
     initialize_codegen()
     emitter = ModuleEmitter(module.name)
     emitter.emit(module)
-    output.write(str(emitter))
+    sys.stdout.write(str(emitter))
+    return 0
 
 
 def start_server(hostname, port):

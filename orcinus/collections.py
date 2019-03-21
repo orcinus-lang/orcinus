@@ -49,19 +49,22 @@ class LazyDictionary(MutableMapping[K, V]):
 class NamedScope:
     def __init__(self):
         self.__names = set()
+        self.__counter = itertools.count()
+        next(self.__counter)  # begin from one
 
     def add(self, original: str = None, previous=None) -> str:
         if previous and previous in self.__names:
             self.__names.remove(previous)
 
         counter = itertools.count()
+        next(counter)  # begin from one
 
         name = original
         while not name or name in self.__names:
             if original:
                 name = '{}.{}'.format(original, next(counter))
             else:
-                name = str(next(counter))
+                name = str(next(self.__counter))
 
         self.__names.add(name)
         return name

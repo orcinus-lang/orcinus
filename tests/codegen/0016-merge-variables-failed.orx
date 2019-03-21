@@ -1,3 +1,5 @@
+# ERROR: Name ‘a’ not found in current scope
+
 
 def identity(c: bool, b: bool) -> int:
     if c:

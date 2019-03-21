@@ -4,11 +4,12 @@
 # of the MIT license.  See the LICENSE file for details.
 from __future__ import annotations
 
-import io
+import dataclasses
 import os
 import subprocess
 import sys
 import warnings as pywarnings
+from typing import Optional, MutableSequence
 
 import pytest
 
@@ -20,6 +21,35 @@ LLI_EXECUTABLE = 'lli-6.0'
 BOOTSTRAP_SCRIPT = 'orcinus'
 
 TEST_FIXTURES = sorted(s for s in find_scripts('./tests/codegen'))
+
+
+@dataclasses.dataclass
+class ScriptInput:
+    name: str
+    filename: str
+    arguments: MutableSequence[str] = dataclasses.field(default_factory=list)
+    result_code: Optional[int] = None
+    warnings: MutableSequence[str] = dataclasses.field(default_factory=list)
+    inputs: MutableSequence[str] = dataclasses.field(default_factory=list)
+    outputs: MutableSequence[str] = dataclasses.field(default_factory=list)
+    errors: MutableSequence[str] = dataclasses.field(default_factory=list)
+
+    def input_string(self) -> Optional[str]:
+        return "\n".join(self.inputs) if self.inputs else None
+
+    def output_string(self) -> Optional[str]:
+        return "\n".join(self.outputs) if self.outputs else None
+
+    def error_string(self) -> Optional[str]:
+        return "\n".join(self.errors) if self.errors else None
+
+
+@dataclasses.dataclass
+class ScriptOutput:
+    completed: bool
+    result_code: int
+    output: str
+    error: str
 
 
 def execute(command, *, input=None, is_binary=False, is_error=False):
@@ -63,13 +93,15 @@ def get_build_options():
     return items
 
 
-def compile_and_execute(filename, *, name, opt_level, arguments, input=None):
+def compile_and_execute(capsys, filename, *, name, opt_level, arguments, input=None):
     # orcinus - generate LLVM IR
-    stream = io.StringIO()
-    compile_module(filename, output=stream)
+    error_code = compile_module(filename)
 
-    stream.seek(0, io.SEEK_SET)
-    assembly = stream.read().encode('utf-8')
+    captured = capsys.readouterr()
+    if error_code:
+        return ScriptOutput(False, error_code, captured.out, captured.err)
+
+    assembly = captured.out.encode('utf-8')
 
     # lli-6.0 - compile LLVM IR and execute
     flags = [
@@ -78,12 +110,12 @@ def compile_and_execute(filename, *, name, opt_level, arguments, input=None):
     flags.extend(get_build_options())
     flags.extend(['-'])
     flags.extend(arguments)
-    return (True,) + execute([LLI_EXECUTABLE, f'-O{opt_level}'] + flags, input=assembly)
+    return ScriptOutput(True, *execute([LLI_EXECUTABLE, f'-O{opt_level}'] + flags, input=assembly))
 
 
 def remove_startswith_and_strip(haystack: str, needle: str) -> str:
     if haystack.startswith(needle):
-        return haystack[len(needle):]
+        return haystack[len(needle):].strip()
     return ""
 
 
@@ -99,12 +131,7 @@ def source_cases(request):
     fullname = "{}.orx".format(request.param)
     fixture = os.path.relpath(fullname, os.getcwd())
 
-    warnings_list = []
-    arguments = []
-    result_code = 0
-    inputs = []
-    outputs = []
-    errors = []
+    script = ScriptInput(fixture, fullname)
 
     with open(fullname, 'r', encoding='utf-8') as stream:
         for line in stream:
@@ -115,55 +142,58 @@ def source_cases(request):
             # warning
             test_msg = remove_startswith_and_strip(line, "WARNING: ")
             if test_msg:
-                warnings_list.append(test_msg.strip())
+                script.warnings.append(test_msg)
 
             # exit code
             test_msg = remove_startswith_and_strip(line, "EXIT: ")
             if test_msg:
-                result_code = int(test_msg.strip())
+                script.result_code = int(test_msg)
 
             # argument
             test_msg = remove_startswith_and_strip(line, "ARG: ")
             if test_msg:
-                arguments.append(test_msg.strip())
+                script.arguments.append(test_msg)
 
             # input
             test_msg = remove_startswith_and_strip(line, "INPUT: ")
             if test_msg:
-                inputs.append(test_msg)
+                script.inputs.append(test_msg)
 
             # output
             test_msg = remove_startswith_and_strip(line, "OUTPUT: ")
             if test_msg:
-                outputs.append(test_msg)
+                script.outputs.append(test_msg)
 
             # error
             test_msg = remove_startswith_and_strip(line, "ERROR:")
             if test_msg:
-                errors.append(test_msg)
+                script.errors.append(test_msg)
 
-    # Defaults
-    input_string = "\n".join(inputs) if inputs else None
-    output_string = "\n".join(outputs) if outputs else None
-    error_string = "\n".join(errors) if errors else None
-
-    return fixture, fullname, warnings_list, arguments, input_string, output_string, error_string, result_code
+    return script
 
 
-def test_compile_and_execution(source_cases):
-    name, filename, warnings, arguments, input, expected_output, expected_error, expected_code = source_cases
+def test_compile_and_execution(caplog, capsys, source_cases):
+    script: ScriptInput = source_cases
 
-    for warning in warnings:
+    for warning in script.warnings:
         pywarnings.warn(UserWarning(warning))
 
     # for opt_level in [0, 1, 2, 3]:  # Test on all optimization levels
     for opt_level in (0,):
-        result = compile_and_execute(filename, name=name, opt_level=opt_level, arguments=arguments, input=input)
-        result_full, result_code, result_output, result_error = result
+        result: ScriptOutput = compile_and_execute(
+            capsys,
+            script.filename,
+            name=script.name,
+            opt_level=opt_level,
+            arguments=script.arguments,
+            input=script.inputs
+        )
 
-        if expected_code is not None:
-            assert result_code == expected_code
-        if expected_error is not None:
-            assert expected_error in result_error
-        if expected_output is not None:
-            assert expected_output in result_output
+        if script.result_code is not None:
+            assert result.result_code == script.result_code
+
+        for error in script.errors:
+            assert any(error in rec.message for rec in caplog.records)
+
+        for output in script.outputs:
+            assert output in result.output

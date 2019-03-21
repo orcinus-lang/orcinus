@@ -1,11 +1,13 @@
+# EXIT: 123
 
-def identity(c: bool, b: bool) -> int:
+
+def identity(c: bool) -> int:
     if c:
         a: int = 123
-    elif b:
+    else:
         a: int = 12
     return a
 
 
 def main() -> int:
-    return identity(True, True)
+    return identity(True)

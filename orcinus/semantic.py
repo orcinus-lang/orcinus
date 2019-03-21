@@ -11,7 +11,6 @@ from typing import Deque
 from typing import MutableMapping, Tuple
 
 from orcinus.exceptions import OrcinusError
-from orcinus.flow import FlowGraph, FlowBuilder
 from orcinus.symbols import *
 from orcinus.syntax import *
 from orcinus.utils import cached_property
@@ -292,46 +291,43 @@ class GlobalEnvironment(SemanticEnvironment):
 
 
 class LocalEnvironment(SemanticEnvironment):
-    def __init__(self, environment: GlobalEnvironment):
+    def __init__(self, environment: GlobalEnvironment, builder: IRBuilder):
         self.__globals = environment
-        self.__scopes = [SemanticScope()]
+        self.__builder = builder
+        self.__scopes = [FunctionScope(builder.block)]
 
     @property
     def globals(self) -> GlobalEnvironment:
         return self.__globals
 
     @property
-    def scope(self) -> SemanticScope:
+    def scope(self) -> FunctionScope:
         return self.__scopes[-1]
 
+    @property
+    def builder(self) -> IRBuilder:
+        return self.__builder
+
     @scope.setter
-    def scope(self, scope: SemanticScope):
+    def scope(self, scope: FunctionScope):
         self.__scopes[-1] = scope
 
-    def push(self) -> SemanticScope:
+    def push(self, block: BasicBlock = None) -> FunctionScope:
         """ Create new scope inherited from current and push to stack """
-        scope = SemanticScope(self.scope)
+        scope = FunctionScope(block or self.builder.block, self.scope)
         self.__scopes.append(scope)
         return scope
 
-    def pop(self) -> SemanticScope:
+    def pop(self) -> FunctionScope:
         """ Pop scope from stack """
         scope = self.__scopes.pop()
         return scope
 
-    def merge(self, scopes: Set[SemanticScope]) -> SemanticScope:
-        """ Merge current scope with another scopes and replace """
-        self.scope = SemanticScope(self.scope)
-
-        # Find intersection between received scopes and add to new scope
-
-        # Return result scope
-        return self.scope
-
     @contextlib.contextmanager
-    def usage(self) -> SemanticScope:
-        scope = self.push()
+    def usage(self, block: BasicBlock) -> FunctionScope:
+        scope = self.push(block)
         yield scope
+        scope.exit_block = self.builder.block
         self.pop()
 
     def resolve(self, name: str) -> Optional[Symbol]:
@@ -348,6 +344,9 @@ class SemanticScope:
     def parent(self) -> SemanticScope:
         return self.__parent
 
+    def keys(self):
+        return self.__declared.keys()
+
     def define(self, name: str, symbol: Symbol):
         self.__declared[name] = symbol
 
@@ -357,6 +356,14 @@ class SemanticScope:
             return symbol
         elif self.parent:
             return self.parent.resolve(name)
+
+
+class FunctionScope(SemanticScope):
+    def __init__(self, enter_block: BasicBlock, parent: SemanticScope = None):
+        super(FunctionScope, self).__init__(parent)
+
+        self.enter_block = enter_block
+        self.exit_block = enter_block
 
 
 class SemanticMixin(abc.ABC):
@@ -894,234 +901,13 @@ class FunctionResolver(SemanticMixin):
         return None
 
 
-class FlowAnnotator:
-    def __init__(self, diagnostics):
-        self.__diagnostics = diagnostics
-        self.__graph = FlowGraph()
-        self.__builder = FlowBuilder(self.__graph)
-
-    @property
-    def graph(self) -> FlowGraph:
-        return self.__graph
-
-    @property
-    def diagnostics(self) -> DiagnosticManager:
-        return self.__diagnostics
-
-    @property
-    def builder(self) -> FlowBuilder:
-        return self.__builder
-
-    def annotate(self, node: FunctionNode) -> FlowGraph:
-        if not node.is_abstract:
-            self.annotate_statement(node.statement)
-
-        # last exit
-        if self.builder.block and not self.builder.block.is_terminated:
-            self.builder.append_link(self.builder.exit_block)
-
-        graph = self.builder.graph
-        return graph
-
-    def annotate_statement(self, node: StatementNode):
-        annotator = FlowStatementAnnotator(self)
-        return annotator.annotate_statement(node)
-
-    def annotate_expression(self, node: ExpressionNode):
-        annotator = FlowExpressionAnnotator(self)
-        return annotator.annotate_expression(node)
-
-
-class FlowMixin:
-    def __init__(self, parent: FlowAnnotator):
-        self.parent = parent
-
-    @property
-    def graph(self) -> FlowGraph:
-        return self.parent.graph
-
-    @property
-    def diagnostics(self) -> DiagnosticManager:
-        return self.parent.diagnostics
-
-    @property
-    def builder(self) -> FlowBuilder:
-        return self.parent.builder
-
-    def annotate_statement(self, node: StatementNode):
-        return self.parent.annotate_statement(node)
-
-    def annotate_expression(self, node: ExpressionNode):
-        return self.parent.annotate_expression(node)
-
-
-class FlowStatementAnnotator(FlowMixin, StatementVisitor[None]):
-    def annotate_statement(self, node: StatementNode):
-        return self.visit(node)
-
-    def visit_statement(self, node: StatementNode):
-        self.diagnostics.error(node.location, 'Not implemented control flow annotation for statement')
-
-    def visit_block_statement(self, node: BlockStatementNode):
-        for child in node.statements:
-            self.annotate_statement(child)
-
-    def visit_while_statement(self, node: WhileStatementNode):
-        terminated_blocks = []
-
-        # loop start
-        start_block = self.builder.append_block('while.start')
-        self.builder.block.append_link(start_block)
-
-        # loop condition
-        self.builder.block = start_block
-        with self.builder.block_helper('while.cond'):
-            self.annotate_expression(node.condition)
-
-        cond_block = self.builder.block
-        assert cond_block, "Condition must continue execution of flow"
-
-        # loop then block
-        with self.builder.block_helper('while.then') as then_helper:
-            with self.builder.loop_helper(cond_block) as loop_helper:
-                self.annotate_statement(node.then_statement)
-
-        if then_helper.exit_block:
-            self.builder.append_link(cond_block)
-
-        # loop else block
-        if node.else_statement:
-            self.builder.block = cond_block
-            with self.builder.block_helper('while.else') as else_helper:
-                self.annotate_statement(node.else_statement)
-            terminated_blocks.append(else_helper.exit_block)
-        else:
-            terminated_blocks.append(cond_block)
-
-        # TODO: break
-        # TODO: continue
-
-        # loop next block
-        terminated_blocks = [block for block in terminated_blocks if block]
-        if terminated_blocks:
-            if loop_helper.break_block:
-                loop_helper.break_block.name = 'while.next'
-            next_block = loop_helper.break_block or self.builder.append_block('while.next')
-            for block in terminated_blocks:
-                block.append_link(next_block)
-            self.builder.block = next_block
-        else:
-            # Unreachable code
-            self.builder.unreachable()
-
-    def visit_condition_statement(self, node: ConditionStatementNode):
-        terminated_blocks = []
-
-        # condition
-        self.annotate_expression(node.condition)
-        self.builder.append_instruction(node)
-        enter_block = self.builder.block
-        assert enter_block, "Condition must continue execution of flow"
-
-        # then block
-        self.builder.block = enter_block
-        with self.builder.block_helper('if.then') as then_helper:
-            self.annotate_statement(node.then_statement)
-        terminated_blocks.append(then_helper.exit_block)
-
-        # else block
-        if node.else_statement:
-            self.builder.block = enter_block
-            with self.builder.block_helper('if.else') as else_helper:
-                self.annotate_statement(node.else_statement)
-            terminated_blocks.append(else_helper.exit_block)
-        else:
-            terminated_blocks.append(enter_block)
-
-        # next block
-        terminated_blocks = [block for block in terminated_blocks if block]
-        if terminated_blocks:
-            next_block = self.builder.append_block('if.next')
-            for block in terminated_blocks:
-                block.append_link(next_block)
-            self.builder.block = next_block
-        else:
-            # Unreachable code
-            self.builder.unreachable()
-
-    def visit_else_statement(self, node: ElseStatementNode):
-        return self.annotate_statement(node.statement)
-
-    def visit_finally_statement(self, node: FinallyStatementNode):
-        return self.annotate_statement(node.statement)
-
-    def visit_expression_statement(self, node: ExpressionStatementNode):
-        self.annotate_expression(node.value)
-        self.builder.append_instruction(node)
-
-    def visit_pass_statement(self, node: PassStatementNode):
-        pass  # skip
-
-    def visit_return_statement(self, node: ReturnStatementNode):
-        if node.value:
-            self.annotate_expression(node.value)
-
-        self.builder.append_instruction(node)
-        self.builder.append_link(self.builder.exit_block)
-        self.builder.unreachable()
-
-    def visit_continue_statement(self, node: ContinueStatementNode):
-        if self.builder.continue_block:
-            self.builder.append_link(self.builder.continue_block)
-        else:
-            self.diagnostics.error(node.location, "‘continue’ is outside of loop")
-
-        self.builder.unreachable()
-
-    def visit_break_statement(self, node: BreakStatementNode):
-        if self.builder.break_block:
-            self.builder.append_link(self.builder.break_block)
-        else:
-            self.diagnostics.error(node.location, "‘break’ is outside of loop")
-
-        self.builder.unreachable()
-
-    def visit_assign_statement(self, node: AssignStatementNode):
-        self.annotate_expression(node.source)
-        self.annotate_expression(node.target)
-        self.builder.append_instruction(node)
-
-
-class FlowExpressionAnnotator(FlowMixin, ExpressionVisitor[None]):
-    def annotate_expression(self, node: ExpressionNode):
-        return self.visit(node)
-
-    def visit_expression(self, node: ExpressionNode):
-        self.diagnostics.error(node.location, 'Not implemented control flow annotation for statement')
-
-    def visit_integer_expression(self, node: IntegerExpressionNode):
-        self.builder.append_instruction(node)
-
-    def visit_string_expression(self, node: StringExpressionNode):
-        self.builder.append_instruction(node)
-
-    def visit_named_expression(self, node: NamedExpressionNode):
-        self.builder.append_instruction(node)
-
-    def visit_attribute_expression(self, node: AttributeExpressionNode):
-        self.builder.append_instruction(node)
-
-    def visit_call_expression(self, node: CallExpressionNode):
-        self.builder.append_instruction(node)
-
-
 class FunctionEmitter(ExpressionAnnotator):
     def __init__(self, model: SemanticModel, symbols: SemanticMapping[SyntaxNode, Symbol], node: FunctionNode):
         super().__init__(model, SemanticMapping(model, parent=symbols, constructor=lambda n: self.annotate(n)))
 
         self.__node = node
         self.__builder = IRBuilder(self.function.append_basic_block('entry'))
-        self.__environment = LocalEnvironment(model.environment)
+        self.__environment = LocalEnvironment(model.environment, self.__builder)
 
         for parameter in self.function.parameters:
             self.environment.define(parameter.name, parameter)
@@ -1200,6 +986,40 @@ class FunctionMixin(SemanticAnnotator):
     def environment(self) -> LocalEnvironment:
         return self.parent.environment
 
+    def merge(self, scopes: Set[SemanticScope]) -> SemanticScope:
+        """ Merge scopes in next scope """
+        scope = self.environment.push()
+
+        names = [set(previous.keys()) for previous in scopes]
+        names = set.intersection(*map(set, names))
+
+        for name in names:
+            bases = {previous: previous.resolve(name) for previous in scopes}
+            if not bases:
+                continue
+
+            # merge only variables
+            if not all(isinstance(base, AllocaInstruction) for base in bases.values()):
+                continue
+
+            value: AllocaInstruction = first(iter(bases.values()))
+
+            # merge only values with equal type
+            if not all(base.type == value.type for base in bases.values()):
+                continue
+
+            # merge
+            with self.builder.goto_entry_block():
+                variable = self.builder.alloca(value.type, name=value.name, location=value.location)
+
+            for previous, base in bases.items():
+                with self.builder.goto_block(previous.exit_block):
+                    value = self.builder.load(base, location=value.location)
+                    self.builder.store(variable, value, location=value.location)
+            scope.define(name, variable)
+
+        return scope
+
     def emit_statement(self, node: StatementNode):
         return self.parent.emit_statement(node)
 
@@ -1240,18 +1060,18 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         continue_blocks = set()  # Block that continue execution
 
         # then block and scope
-        with self.environment.usage() as then_scope:  # new scope
-            then_block = self.builder.append_basic_block('if.then')
-            self.builder.position_at(then_block)
+        then_block = self.builder.append_basic_block('if.then')
+        with self.environment.usage(then_block) as then_scope:  # new scope
+            self.builder.position_at_end(then_block)
             self.emit_statement(node.then_statement)
             if not self.builder.is_terminated:
                 continue_blocks.add(self.builder.block)
 
         # else block and scope
         if node.else_statement:
-            with self.environment.usage() as else_scope:  # new scope
-                else_block = self.builder.append_basic_block('if.else')
-                self.builder.position_at(else_block)
+            else_block = self.builder.append_basic_block('if.else')
+            with self.environment.usage(else_block) as else_scope:  # new scope
+                self.builder.position_at_end(else_block)
                 self.emit_statement(node.else_statement)
                 if not self.builder.is_terminated:
                     continue_blocks.add(self.builder.block)
@@ -1267,9 +1087,6 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         with self.builder.goto_block(begin_block):
             self.builder.cbranch(condition, then_block, else_block, location=node.location)
 
-        # merge scope
-        self.environment.merge({then_scope, else_scope})
-
         # check if next blocks is unreachable
         if not next_block and not continue_blocks:
             return
@@ -1282,7 +1099,10 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
                 self.builder.branch(next_block, location=node.location)
 
         # mark as continue
-        self.builder.position_at(next_block)
+        self.builder.position_at_end(next_block)
+
+        # merge scopes
+        self.merge({then_scope, else_scope})
 
     def visit_else_statement(self, node: ElseStatementNode):
         return self.emit_statement(node.statement)
@@ -1290,7 +1110,7 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
     def visit_while_statement(self, node: WhileStatementNode):
         cond_block = self.builder.append_basic_block('while.cond')
         self.builder.branch(cond_block, location=node.location)
-        self.builder.position_at(cond_block)
+        self.builder.position_at_end(cond_block)
 
         condition = self.emit_expression(node.condition)
         begin_scope = self.environment.scope
@@ -1299,18 +1119,18 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         continue_blocks = set()  # Block that continue execution
 
         # then block and scope
-        with self.environment.usage() as then_scope:  # new scope
-            then_block = self.builder.append_basic_block('while.body')
-            self.builder.position_at(then_block)
+        then_block = self.builder.append_basic_block('while.body')
+        with self.environment.usage(then_block) as then_scope:  # new scope
+            self.builder.position_at_end(then_block)
             self.emit_statement(node.then_statement)
             if not self.builder.is_terminated:
                 self.builder.branch(cond_block, location=node.location)
 
         # else block and scope
         if node.else_statement:
-            with self.environment.usage() as else_scope:  # new scope
-                else_block = self.builder.append_basic_block('while.else')
-                self.builder.position_at(else_block)
+            else_block = self.builder.append_basic_block('while.else')
+            with self.environment.usage(else_block) as else_scope:  # new scope
+                self.builder.position_at_end(else_block)
                 self.emit_statement(node.else_statement)
                 if not self.builder.is_terminated:
                     continue_blocks.add(self.builder.block)
@@ -1327,7 +1147,7 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
             self.builder.cbranch(condition, then_block, else_block, location=node.location)
 
         # merge scope
-        self.environment.merge({then_scope, else_scope})
+        self.merge({then_scope, else_scope})
 
         # check if next blocks is unreachable
         if not next_block and not continue_blocks:
@@ -1341,17 +1161,22 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
                 self.builder.branch(next_block, location=node.location)
 
         # mark as continue
-        self.builder.position_at(next_block)
+        self.builder.position_at_end(next_block)
 
     def visit_variable_statement(self, node: VariableStatementNode):
+        # allocate register for variable
         var_type = self.as_type(node.type)
-        with self.builder.goto_block(self.function.entry_block):
+        with self.builder.goto_entry_block():
             variable = self.builder.alloca(var_type, name=node.name, location=node.location)
 
+        # initialize variable with initial value
         if node.initial_value:
             initial_value = self.emit_expression(node.initial_value)
-            self.builder.store(variable, initial_value, location=node.initial_value.location)
+        else:
+            initial_value = self.builder.get_default_value(var_type, location=node.location)
+        self.builder.store(variable, initial_value, location=node.location)
 
+        # store in environment
         self.environment.define(node.name, variable)
 
     def visit_assign_statement(self, node: AssignStatementNode):
