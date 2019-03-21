@@ -73,15 +73,15 @@ class ModuleEmitter:
         llvm_type = ir.FunctionType(llvm_returns, llvm_arguments)
         return ir.Function(self.llvm_module, llvm_type, func.native_name or func.name)
 
-    def declare_type(self, type: Type) -> ir.Type:
-        if isinstance(type, BooleanType):
+    def declare_type(self, symbol: Type) -> ir.Type:
+        if isinstance(symbol, BooleanType):
             return ir.IntType(1)
-        elif isinstance(type, IntegerType):
+        elif isinstance(symbol, IntegerType):
             return ir.IntType(64)
-        elif isinstance(type, VoidType):
+        elif isinstance(symbol, VoidType):
             return ir.LiteralStructType([])
 
-        raise DiagnosticError(type.location, u'Conversion to LLVM is not implemented')
+        raise DiagnosticError(symbol.location, f'Conversion to LLVM is not implemented: {type(symbol).__name__}')
 
     def emit_function(self, func: Function):
         emitter = FunctionEmitter(self, func, self.llvm_functions[func])
@@ -96,7 +96,7 @@ class ModuleEmitter:
 class FunctionEmitter:
     llvm_builder: ir.IRBuilder
 
-    def __init__(self, parent: ModuleEmitter, func: Function, llvm_func: Function):
+    def __init__(self, parent: ModuleEmitter, func: Function, llvm_func: ir.Function):
         self.parent = parent
         self.function = func
         self.llvm_function = llvm_func
@@ -123,23 +123,37 @@ class FunctionEmitter:
     def get_value(self, value: Value) -> ir.Value:
         if isinstance(value, IntegerConstant):
             return ir.Constant(self.llvm_types[value.type], value.value)
+        elif isinstance(value, BooleanConstant):
+            return ir.Constant(self.llvm_types[value.type], value.value)
         elif isinstance(value, NoneConstant):
             return ir.Constant.literal_struct([])
 
-        raise DiagnosticError(value.location, u'Conversion to LLVM is not implemented')
+        raise DiagnosticError(value.location, f'Conversion to LLVM is not implemented: {type(value).__name__}')
 
     def emit_instruction(self, inst: Instruction) -> ir.Value:
         if isinstance(inst, ReturnInstruction):
             result = self.emit_return_instruction(inst)
+        elif isinstance(inst, BranchInstruction):
+                result = self.emit_branch_instruction(inst)
         else:
-            raise DiagnosticError(inst.location, u'Conversion to LLVM is not implemented')
+            raise DiagnosticError(inst.location, f'Conversion to LLVM is not implemented: {type(inst).__name__}')
 
         self.llvm_instructions[inst] = result
         return result
 
     def emit_return_instruction(self, inst: ReturnInstruction) -> ir.Value:
-        value = self.get_value(inst.value)
-        return self.llvm_builder.ret(value)
+        llvm_value = self.get_value(inst.value)
+        return self.llvm_builder.ret(llvm_value)
+
+    def emit_branch_instruction(self, inst: BranchInstruction) -> ir.Value:
+        if inst.condition:
+            llvm_cond = self.get_value(inst.condition)
+            llvm_true = self.llvm_blocks[inst.then_block]
+            llvm_false = self.llvm_blocks[inst.else_block]
+            return self.llvm_builder.cbranch(llvm_cond, llvm_true, llvm_false)
+        else:
+            llvm_target = self.llvm_blocks[inst.then_block]
+            return self.llvm_builder.branch(llvm_target)
 
 
 def initialize_codegen():

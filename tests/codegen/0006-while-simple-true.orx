@@ -1,0 +1,5 @@
+# EXIT: 3
+def main() -> int:
+    while True:
+        return 3
+    return 1

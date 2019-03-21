@@ -174,7 +174,7 @@ class FlowBuilder:
 
     @property
     def break_block(self) -> Optional[FlowBlock]:
-        if  not self.__break_block and self.__continue_block:
+        if not self.__break_block and self.__continue_block:
             self.__break_block = self.append_block('break')
         return self.__break_block
 

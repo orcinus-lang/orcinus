@@ -1,7 +1,6 @@
-
-
+# EXIT: 3
 def main() -> int:
     while True:
-        pass
+        return 3
     else:
-        return 0
+        return 1

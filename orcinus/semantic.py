@@ -102,7 +102,8 @@ class SemanticModel:
         self.is_analyzed = False
 
         annotator = StaticAnnotator(self)
-        self.symbols = SemanticScope(self, constructor=lambda n: annotator.annotate(n))
+        self.symbols = SemanticMapping(self, constructor=lambda n: annotator.annotate(n))
+        self.environment = GlobalEnvironment()
 
     @property
     def symbol_context(self):
@@ -159,7 +160,8 @@ class SemanticModel:
 
     def emit_function(self, node: FunctionNode):
         emitter = FunctionEmitter(self, self.symbols, node)
-        emitter.emit()
+        function = emitter.emit()
+        function = function
 
     def analyze(self):
         if self.is_analyzed:
@@ -179,30 +181,14 @@ class SemanticModel:
         )
         for func in functions:
             if not func.is_abstract:
-                annotator = FlowAnnotator(self.diagnostics)
-                graph = annotator.annotate(func)
                 self.emit_function(func)
 
     def __repr__(self):
         return f'<SemanticModel: {self.module}>'
 
-    def get_types(self, scope: Optional[SyntaxScope] = None) -> Iterator[Type]:
-        """ Returns all types in scope """
-        if scope:
-            for name in scope:
-                item = scope.resolve(name)
-                if isinstance(item, TypeDeclarationNode):
-                    yield self.symbols[item]
 
-            yield from self.get_types(scope.parent)
-        else:
-            for symbol in self.imports.values():
-                if isinstance(symbol, Type):
-                    yield symbol
-
-
-class SemanticScope(MutableMapping[SyntaxNode, Symbol]):
-    def __init__(self, model: SemanticModel, *, parent: SemanticScope = None, constructor: SymbolConstructor = None):
+class SemanticMapping(MutableMapping[SyntaxNode, Symbol]):
+    def __init__(self, model: SemanticModel, *, parent: SemanticMapping = None, constructor: SymbolConstructor = None):
         if not parent and not constructor:
             raise ValueError(u'Required any of this arguments: parent or constructor')
         self.__model = model
@@ -250,9 +236,103 @@ class SemanticScope(MutableMapping[SyntaxNode, Symbol]):
         return False
 
 
-class SemanticMixin:
+class SemanticEnvironment(abc.ABC):
+    """
+    Environment stored information about declared symbols and their types in current environment.
+
+    Environment changed
+    """
+
+    @property
+    @abc.abstractmethod
+    def scope(self) -> SemanticScope:
+        """ Current scope """
+        raise NotImplementedError
+
+    def define(self, name: str, symbol: Symbol):
+        return self.scope.define(name, symbol)
+
+    def resolve(self, name: str) -> Optional[Symbol]:
+        return self.scope.resolve(name)
+
+
+class GlobalEnvironment(SemanticEnvironment):
+    def __init__(self):
+        self.__scopes = [SemanticScope()]
+
+    @property
+    def scope(self) -> SemanticScope:
+        return self.__scopes[-1]
+
+
+class LocalEnvironment(SemanticEnvironment):
+    def __init__(self, environment: GlobalEnvironment):
+        self.__globals = environment
+        self.__scopes = [SemanticScope()]
+
+    @property
+    def globals(self) -> GlobalEnvironment:
+        return self.__globals
+
+    @property
+    def scope(self) -> SemanticScope:
+        return self.__scopes[-1]
+
+    @scope.setter
+    def scope(self, scope: SemanticScope):
+        self.__scopes[-1] = scope
+
+    def push(self) -> SemanticScope:
+        """ Create new scope inherited from current and push to stack """
+        scope = SemanticScope(self.scope)
+        self.__scopes.append(scope)
+        return scope
+
+    def pop(self) -> SemanticScope:
+        """ Pop scope from stack """
+        scope = self.__scopes.pop()
+        return scope
+
+    def merge(self, scopes: Set[SemanticScope]) -> SemanticScope:
+        """ Merge current scope with another scopes and replace """
+        self.scope = SemanticScope(self.scope.parent)
+
+        # Find intersection between received scopes and add to new scope
+
+        # Return result scope
+        return self.scope
+
+    @contextlib.contextmanager
+    def usage(self) -> SemanticScope:
+        scope = self.push()
+        yield scope
+        self.pop()
+
+
+class SemanticScope:
+    def __init__(self, parent: SemanticScope = None):
+        self.__parent: SemanticScope = parent
+        self.__declared: MutableMapping[str, Symbol] = {}
+        self.__typed: MutableMapping[str, Type] = {}
+
+    @property
+    def parent(self) -> SemanticScope:
+        return self.__parent
+
+    def define(self, name: str, symbol: Symbol):
+        self.__declared[name] = symbol
+
+    def resolve(self, name: str) -> Optional[Symbol]:
+        return self.__declared.get(name)
+
+
+class SemanticMixin(abc.ABC):
     def __init__(self, model: SemanticModel):
         self.__model = model
+
+    @property
+    def environment(self) -> SemanticEnvironment:
+        return self.model.environment
 
     @property
     def symbol_context(self) -> SymbolContext:
@@ -263,7 +343,7 @@ class SemanticMixin:
         return self.__model
 
     @property
-    def symbols(self) -> SemanticScope:
+    def symbols(self) -> SemanticMapping:
         return self.model.symbols
 
     @property
@@ -345,19 +425,19 @@ class SemanticInitializer(SemanticMixin):
 
 
 class SemanticAnnotator(SemanticMixin, abc.ABC):
-    def __init__(self, model: SemanticModel, symbols: SemanticScope = None):
+    def __init__(self, model: SemanticModel, symbols: SemanticMapping = None):
         super(SemanticAnnotator, self).__init__(model)
 
         self.__symbols = symbols
 
     @property
-    def symbols(self) -> SemanticScope:
+    def symbols(self) -> SemanticMapping:
         return self.__symbols if self.__symbols is not None else self.model.symbols
 
     def annotate(self, node: SyntaxNode) -> Optional[Symbol]:
         return None
 
-    def search_named_symbol(self, scope: SyntaxScope, name: str, location: Location) -> Optional[Symbol]:
+    def search_named_symbol(self, environ: SemanticEnvironment, name: str, location: Location) -> Optional[Symbol]:
         if name == TYPE_VOID_NAME:
             return self.symbol_context.void_type
         elif name == TYPE_BOOLEAN_NAME:
@@ -366,6 +446,8 @@ class SemanticAnnotator(SemanticMixin, abc.ABC):
             return self.symbol_context.integer_type
         elif name == TYPE_STRING_NAME:
             return self.symbol_context.string_type
+        elif name == TYPE_FLOAT_NAME:
+            return self.symbol_context.float_type
         elif name == VALUE_TRUE_NAME:
             return BooleanConstant(self.symbol_context, True, location=location)
         elif name == VALUE_FALSE_NAME:
@@ -374,94 +456,65 @@ class SemanticAnnotator(SemanticMixin, abc.ABC):
             return NoneConstant(self.symbol_context, location=location)
 
         # resolve static symbol
-        symbol = scope.resolve(name)
-        if symbol:
-            return self.symbols[symbol]
-
-        # resolve import symbol
-        return self.model.imports.get(name)
+        return self.environment.resolve(name)
 
 
-class ExpressionAnnotator(SemanticAnnotator):
-    def annotate(self, node: SyntaxNode) -> Optional[Symbol]:
-        if isinstance(node, ExpressionNode):
-            return self.annotate_expression(node)
-        return super().annotate(node)
-
-    def annotate_expression(self, node: ExpressionNode) -> Symbol:
-        if isinstance(node, IntegerExpressionNode):
-            return self.annotate_integer_expression(node)
-        elif isinstance(node, StringExpressionNode):
-            return self.annotate_string_expression(node)
-        elif isinstance(node, NamedExpressionNode):
-            return self.annotate_named_expression(node)
-        elif isinstance(node, AttributeExpressionNode):
-            return self.annotate_attribute_expression(node)
-        elif isinstance(node, ConditionExpressionNode):
-            return self.annotate_condition_expression(node)
-        elif isinstance(node, UnaryExpressionNode):
-            return self.annotate_unary_expression(node)
-        elif isinstance(node, BinaryExpressionNode):
-            return self.annotate_binary_expression(node)
-        elif isinstance(node, LogicExpressionNode):
-            return self.annotate_logic_expression(node)
-        elif isinstance(node, CompareExpressionNode):
-            return self.annotate_compare_expression(node)
-        elif isinstance(node, CallExpressionNode):
-            return self.annotate_call_expression(node)
-        elif isinstance(node, SubscribeExpressionNode):
-            return self.annotate_subscribe_expression(node)
-
-        self.diagnostics.error(node.location, 'Not implemented expression')
+class ExpressionAnnotator(SemanticAnnotator, ExpressionVisitor[Value], abc.ABC):
+    def visit_expression(self, node: ExpressionNode) -> Value:
+        self.diagnostics.error(node.location, f"Not implemented emitting symbols for statement: {type(node).__name__}")
         return ErrorValue(self.module, node.location)
 
-    def annotate_integer_expression(self, node: IntegerExpressionNode) -> Symbol:
+    def visit_integer_expression(self, node: IntegerExpressionNode) -> Symbol:
         return IntegerConstant(self.symbol_context, int(node.value), location=node.location)
 
-    def annotate_string_expression(self, node: StringExpressionNode) -> Symbol:
+    def visit_string_expression(self, node: StringExpressionNode) -> Symbol:
         return StringConstant(self.symbol_context, node.value, location=node.location)
 
-    def annotate_named_expression(self, node: NamedExpressionNode) -> Symbol:
-        symbol = self.search_named_symbol(node.scope, node.name, node.location)
+    def visit_named_expression(self, node: NamedExpressionNode) -> Symbol:
+        symbol = self.search_named_symbol(self.environment, node.name, node.location)
         if not symbol:
             self.diagnostics.error(node.location, f'Name ‘{node.name}’ not found in current scope')
             return ErrorValue(self.module, node.location)
         return symbol
 
-    def annotate_attribute_expression(self, node: AttributeExpressionNode) -> Symbol:
+    def visit_attribute_expression(self, node: AttributeExpressionNode) -> Symbol:
         self.diagnostics.error(node.location, 'This expression can not used in this context')
         return ErrorValue(self.module, node.location)
 
-    def annotate_condition_expression(self, node: ConditionExpressionNode) -> Symbol:
+    def visit_condition_expression(self, node: ConditionExpressionNode) -> Symbol:
         self.diagnostics.error(node.location, 'This expression can not used in this context')
         return ErrorValue(self.module, node.location)
 
-    def annotate_unary_expression(self, node: UnaryExpressionNode) -> Symbol:
+    def visit_unary_expression(self, node: UnaryExpressionNode) -> Symbol:
         self.diagnostics.error(node.location, 'This expression can not used in this context')
         return ErrorValue(self.module, node.location)
 
-    def annotate_binary_expression(self, node: BinaryExpressionNode) -> Symbol:
+    def visit_binary_expression(self, node: BinaryExpressionNode) -> Symbol:
         self.diagnostics.error(node.location, 'This expression can not used in this context')
         return ErrorValue(self.module, node.location)
 
-    def annotate_logic_expression(self, node: LogicExpressionNode) -> Symbol:
+    def visit_logic_expression(self, node: LogicExpressionNode) -> Symbol:
         self.diagnostics.error(node.location, 'This expression can not used in this context')
         return ErrorValue(self.module, node.location)
 
-    def annotate_compare_expression(self, node: CompareExpressionNode) -> Symbol:
+    def visit_compare_expression(self, node: CompareExpressionNode) -> Symbol:
         self.diagnostics.error(node.location, 'This expression can not used in this context')
         return ErrorValue(self.module, node.location)
 
-    def annotate_call_expression(self, node: CallExpressionNode) -> Symbol:
+    def visit_call_expression(self, node: CallExpressionNode) -> Symbol:
         self.diagnostics.error(node.location, 'This expression can not used in this context')
         return ErrorValue(self.module, node.location)
 
-    def annotate_subscribe_expression(self, node: SubscribeExpressionNode) -> Symbol:
+    def visit_subscribe_expression(self, node: SubscribeExpressionNode) -> Symbol:
         self.diagnostics.error(node.location, 'This expression can not used in this context')
         return ErrorValue(self.module, node.location)
 
 
-class StaticAnnotator(ExpressionAnnotator):
+class StaticAnnotator(SemanticAnnotator):
+    @property
+    def environment(self) -> SemanticEnvironment:
+        return self.model.environment
+
     def annotate(self, node: SyntaxNode) -> Optional[Symbol]:
         if isinstance(node, SyntaxTree):
             return self.annotate_module(node)
@@ -470,7 +523,7 @@ class StaticAnnotator(ExpressionAnnotator):
         elif isinstance(node, MemberNode):
             return self.annotate_member(node)
         elif isinstance(node, ExpressionNode):
-            return self.annotate_expression(node)
+            return ExpressionAnnotator(self.model).visit(node)
         elif isinstance(node, OverloadNode):
             return self.annotate_overload(node)
         elif isinstance(node, DecoratorNode):
@@ -501,7 +554,7 @@ class StaticAnnotator(ExpressionAnnotator):
         return GenericType(self.model.module, node.name, node.location)
 
     def annotate_named_type(self, node: NamedTypeNode) -> Symbol:
-        symbol = self.search_named_symbol(node.scope, node.name, node.location)
+        symbol = self.search_named_symbol(self.environment, node.name, node.location)
         if not symbol:
             self.diagnostics.error(node.location, f'Type ‘{node.name}’ not found in current scope')
             return ErrorType(self.module, node.location)
@@ -582,12 +635,32 @@ class ParentMemberAnnotator(SemanticAnnotator, MemberVisitor[Optional[Symbol]]):
         # assert node not in self.symbols
         return func
 
+    def visit_class(self, node: ClassNode) -> ClassType:
+        return ClassType(self.parent, node.name, location=node.location)
+
+    def visit_struct(self, node: StructNode) -> StructType:
+        return StructType(self.parent, node.name, location=node.location)
+
+    def visit_enum(self, node: EnumNode) -> EnumType:
+        if node.generic_parameters:
+            self.diagnostics.error(node.location, 'Generic types is not implemented')
+        return EnumType(self.parent, node.name, location=node.location)
+
+    def visit_interface(self, node: InterfaceNode) -> InterfaceType:
+        return InterfaceType(self.parent, node.name, location=node.location)
+
+
+class ModuleMemberAnnotator(ParentMemberAnnotator):
+    @property
+    def parent(self) -> Module:
+        return cast(Module, super().parent)
+
     def visit_class(self, node: ClassNode) -> Type:
         if self.module == self.symbol_context.builtins_module:
             if node.name == TYPE_STRING_NAME:
                 return StringType(self.parent, location=node.location)
 
-        return ClassType(self.parent, node.name, location=node.location)
+        return super().visit_class(node)
 
     def visit_struct(self, node: StructNode) -> Type:
         if self.module == self.symbol_context.builtins_module:
@@ -597,22 +670,10 @@ class ParentMemberAnnotator(SemanticAnnotator, MemberVisitor[Optional[Symbol]]):
                 return BooleanType(self.parent, location=node.location)
             elif node.name == TYPE_VOID_NAME:
                 return VoidType(self.parent, location=node.location)
+            elif node.name == TYPE_FLOAT_NAME:
+                return FloatType(self.parent, location=node.location)
 
-        return StructType(self.parent, node.name, location=node.location)
-
-    def visit_enum(self, node: EnumNode) -> Type:
-        if node.generic_parameters:
-            self.diagnostics.error(node.location, 'Generic types is not implemented')
-        return EnumType(self.parent, node.name, location=node.location)
-
-    def visit_interface(self, node: InterfaceNode) -> Type:
-        return InterfaceType(self.parent, node.name, location=node.location)
-
-
-class ModuleMemberAnnotator(ParentMemberAnnotator):
-    @property
-    def parent(self) -> Module:
-        return cast(Module, super().parent)
+        return super().visit_struct(node)
 
 
 class TypeMemberAnnotator(ParentMemberAnnotator):
@@ -710,7 +771,7 @@ class FunctionResolver(SemanticMixin):
         self.keywords = keywords or {}
         self.candidates = []
 
-    def add_scope_functions(self, scope: SyntaxScope, name: str):
+    def add_scope_functions(self, environment: SemanticEnvironment, name: str):
         node = scope.resolve(name)
         if isinstance(node, (FunctionNode, OverloadNode)):
             self.candidates.extend(self.symbols[node].as_functions(self.location))
@@ -1010,11 +1071,19 @@ class FlowExpressionAnnotator(FlowMixin, ExpressionVisitor[None]):
 
 
 class FunctionEmitter(ExpressionAnnotator):
-    def __init__(self, model: SemanticModel, symbols: SemanticScope[SyntaxNode, Symbol], node: FunctionNode):
-        super().__init__(model, SemanticScope(model, parent=symbols, constructor=lambda n: self.annotate(n)))
+    def __init__(self, model: SemanticModel, symbols: SemanticMapping[SyntaxNode, Symbol], node: FunctionNode):
+        super().__init__(model, SemanticMapping(model, parent=symbols, constructor=lambda n: self.annotate(n)))
 
         self.__node = node
         self.__builder = IRBuilder(self.function.append_basic_block('entry'))
+        self.__environment = LocalEnvironment(model.environment)
+
+        for parameter in self.function.parameters:
+            self.environment.define(parameter.name, parameter)
+
+    @property
+    def environment(self) -> LocalEnvironment:
+        return self.__environment
 
     @property
     def node(self) -> FunctionNode:
@@ -1045,18 +1114,26 @@ class FunctionEmitter(ExpressionAnnotator):
         self.builder.ret(value, location=location)
 
     def emit_statement(self, node: StatementNode):
-        emitter = FunctionStatementEmitter(self)
+        emitter = StatementEmitter(self)
         return emitter.emit_statement(node)
 
     def emit_expression(self, node: ExpressionNode) -> Value:
-        emitter = FunctionExpressionEmitter(self)
+        emitter = ExpressionEmitter(self)
         return emitter.emit_expression(node)
 
     def emit(self):
         self.emit_statement(self.node.statement)
+        if not self.builder.is_terminated:
+            if isinstance(self.function.return_type, VoidType):
+                self.emit_return(NoneConstant(self.symbol_context, self.node.location), self.node.location)
+            else:
+                self.diagnostics.error(self.node.location, 'Function must return value')
+        return self.function
 
 
 class FunctionMixin(SemanticAnnotator):
+    # 1. flow graph (basic block)
+
     def __init__(self, parent: FunctionEmitter):
         super(FunctionMixin, self).__init__(parent.model, parent.symbols)
 
@@ -1074,6 +1151,10 @@ class FunctionMixin(SemanticAnnotator):
     def builder(self) -> IRBuilder:
         return self.parent.builder
 
+    @property
+    def environment(self) -> LocalEnvironment:
+        return self.parent.environment
+
     def emit_statement(self, node: StatementNode):
         return self.parent.emit_statement(node)
 
@@ -1081,8 +1162,14 @@ class FunctionMixin(SemanticAnnotator):
         return self.parent.emit_expression(node)
 
 
-class FunctionStatementEmitter(FunctionMixin, StatementVisitor[None]):
+class StatementEmitter(FunctionMixin, StatementVisitor[None]):
     def emit_statement(self, node: StatementNode):
+        """
+        Emit environment and IR for statement.
+        """
+        if self.builder.is_terminated:
+            return self.diagnostics.error(node.location, f"Unreachable code")
+
         return self.visit(node)
 
     def visit_statement(self, node: StatementNode):
@@ -1096,14 +1183,130 @@ class FunctionStatementEmitter(FunctionMixin, StatementVisitor[None]):
         pass
 
     def visit_return_statement(self, node: ReturnStatementNode):
-        value = self.as_value(node.value) or NoneConstant(self.symbol_context, node.location)
+        value = self.emit_expression(node.value) or NoneConstant(self.symbol_context, node.location)
         self.parent.emit_return(value, value.location)
 
+        # TODO: Unreachable code
 
-class FunctionExpressionEmitter(FunctionMixin, ExpressionVisitor[Value]):
+    def visit_condition_statement(self, node: ConditionStatementNode):
+        """
+        if <condition>:
+            <then_statement>
+        [ else ':'
+            <else_statement> ]
+        <next_statement>    # can be unreachable
+        """
+        condition = self.emit_expression(node.condition)
+        begin_scope = self.environment.scope
+        begin_block = self.builder.block
+
+        continue_blocks = set()  # Block that continue execution
+
+        # then block and scope
+        with self.environment.usage() as then_scope:  # new scope
+            then_block = self.builder.append_basic_block('if.then')
+            self.builder.position_at(then_block)
+            self.emit_statement(node.then_statement)
+            if not self.builder.is_terminated:
+                continue_blocks.add(self.builder.block)
+
+        # else block and scope
+        if node.else_statement:
+            with self.environment.usage() as else_scope:  # new scope
+                else_block = self.builder.append_basic_block('if.else')
+                self.builder.position_at(else_block)
+                self.emit_statement(node.else_statement)
+                if not self.builder.is_terminated:
+                    continue_blocks.add(self.builder.block)
+            next_block = None
+
+        # begin scope
+        else:
+            else_block = self.builder.append_basic_block('if.next')
+            next_block = else_block
+            else_scope = begin_scope
+
+        # branch from begin block to then and else blocks
+        with self.builder.goto_block(begin_block):
+            self.builder.cbranch(condition, then_block, else_block, location=node.location)
+
+        # merge scope
+        self.environment.merge({then_scope, else_scope})
+
+        # check if next blocks is unreachable
+        if not next_block and not continue_blocks:
+            return
+
+        if not next_block:
+            next_block = self.builder.append_basic_block('if.next')
+
+        for block in filter(None, continue_blocks):
+            with self.builder.goto_block(block):
+                self.builder.branch(next_block, location=node.location)
+
+        # mark as continue
+        self.builder.position_at(next_block)
+
+    def visit_else_statement(self, node: ElseStatementNode):
+        return self.emit_statement(node.statement)
+
+    def visit_while_statement(self, node: WhileStatementNode):
+        cond_block = self.builder.append_basic_block('while.cond')
+        self.builder.branch(cond_block, location=node.location)
+        self.builder.position_at(cond_block)
+
+        condition = self.emit_expression(node.condition)
+        begin_scope = self.environment.scope
+        begin_block = self.builder.block
+
+        continue_blocks = set()  # Block that continue execution
+
+        # then block and scope
+        with self.environment.usage() as then_scope:  # new scope
+            then_block = self.builder.append_basic_block('while.body')
+            self.builder.position_at(then_block)
+            self.emit_statement(node.then_statement)
+            if not self.builder.is_terminated:
+                self.builder.branch(cond_block, location=node.location)
+
+        # else block and scope
+        if node.else_statement:
+            with self.environment.usage() as else_scope:  # new scope
+                else_block = self.builder.append_basic_block('while.else')
+                self.builder.position_at(else_block)
+                self.emit_statement(node.else_statement)
+                if not self.builder.is_terminated:
+                    continue_blocks.add(self.builder.block)
+            next_block = None
+
+        # begin scope
+        else:
+            else_block = self.builder.append_basic_block('while.next')
+            next_block = else_block
+            else_scope = begin_scope
+
+        # branch from begin block to then and else blocks
+        with self.builder.goto_block(begin_block):
+            self.builder.cbranch(condition, then_block, else_block, location=node.location)
+
+        # merge scope
+        self.environment.merge({then_scope, else_scope})
+
+        # check if next blocks is unreachable
+        if not next_block and not continue_blocks:
+            return
+
+        if not next_block:
+            next_block = self.builder.append_basic_block('while.next')
+
+        for block in filter(None, continue_blocks):
+            with self.builder.goto_block(block):
+                self.builder.branch(next_block, location=node.location)
+
+        # mark as continue
+        self.builder.position_at(next_block)
+
+
+class ExpressionEmitter(FunctionMixin, ExpressionAnnotator):
     def emit_expression(self, node: ExpressionNode):
         return self.visit(node)
-
-    def visit_expression(self, node: ExpressionNode) -> Value:
-        self.diagnostics.error(node.location, f"Not implemented emitting symbols for statement: {type(node).__name__}")
-        return ErrorValue(self.module, node.location)

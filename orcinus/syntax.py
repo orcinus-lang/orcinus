@@ -9,8 +9,6 @@ import enum
 import weakref
 from typing import Sequence, Iterator, Optional, Union, Iterable, TypeVar, Callable, Mapping, Generic
 
-from multidict import MultiDict
-
 from orcinus.diagnostics import DiagnosticManager
 from orcinus.exceptions import DiagnosticError
 from orcinus.locations import Location, Position
@@ -181,119 +179,14 @@ class SyntaxToken(SyntaxSymbol):
         return f'<{class_name}: {self}>'
 
 
-class SyntaxScope:
-    def __init__(self, context: SyntaxContext, node: SyntaxNode, parent: SyntaxScope = None):
-        self.__context = weakref.ref(context)
-        self.__parent = parent
-        self.__node = weakref.ref(node)
-        self.__defines = MultiDict()
-        self.__resolves = {}
-
-    @property
-    def context(self) -> SyntaxContext:
-        context = self.__context()
-        if context is None:
-            raise RuntimeError('Syntax context is disposed')
-        return context
-
-    @property
-    def node(self) -> SyntaxNode:
-        node = self.__node()
-        if node is None:
-            raise RuntimeError('Syntax node is disposed')
-        return node
-
-    @property
-    def parent(self) -> Optional[SyntaxScope]:
-        return self.__parent
-
-    def declare(self, name, node: SyntaxNode):
-        self.__defines[name] = weakref.ref(node)
-
-    def resolve(self, name: str) -> Optional[SyntaxNode]:
-        # """
-        # Resolve symbol by name in current scope.
-        #
-        # If symbol is defined in current scope and:
-        #
-        #     - has type `Overload` it must extended with functions from parent scope
-        #
-        # If symbol is not defined in current scope, check if it can be resolved in parent scope.
-        # """
-
-        # If symbol already resolved then returns it.
-        if name in self.__resolves:
-            return self.__resolves[name]
-
-        # Resolve symbol in current scope
-        symbol = None
-        symbols = [ref() for ref in self.__defines.getall(name, ())]
-        is_populate = False
-
-        # Found single symbol: import overload function
-        if len(symbols) == 1:
-            symbol = symbols[0]
-            if isinstance(symbol, FunctionNode):
-                symbol = OverloadNode(self.context, name, SyntaxCollection([symbol]), symbol.location)
-
-        # Found multiple symbols: import overload function
-        elif symbols:
-            is_other = any(not isinstance(symbol, FunctionNode) for symbol in symbols)
-            if is_other:
-                for symbol in symbols:
-                    self.context.diagnostics.error(symbol.location, f"Already declared symbol `{symbol.name}`")
-
-            is_populate = True
-
-            symbols = (symbol for symbol in symbols if isinstance(symbol, FunctionNode))
-            symbol = OverloadNode(self.context, name, SyntaxCollection(symbols), symbol.location)
-
-        # Resolve symbol in parent scope
-        elif self.parent:
-            is_populate = False
-            symbol = self.parent.resolve(name)
-            if isinstance(symbol, OverloadNode):
-                symbol = OverloadNode(self.context, name, symbol.functions, symbol.location)
-
-        # # Import nodes from root scope
-        # elif name in self.__imported:
-        #     is_populate = False
-        #     symbol = self.__imported[name]
-
-        # Return None, if symbol is not found in current and ascendant scopes
-        if not symbol:
-            return None
-
-        # Populate overload from parent scopes
-        elif is_populate and isinstance(symbol, OverloadNode):
-            overload = self.parent.resolve(name)
-            if isinstance(overload, OverloadNode):
-                symbol = symbol.extend(overload)
-
-            # overload = self.__imported.get(name)
-            # if isinstance(overload, Overload):
-            #     symbol = symbol.extend(overload)
-
-        # Save resolved symbol
-        self.__resolves[name] = symbol
-        return symbol
-
-    def __iter__(self):
-        return iter(self.__defines)
-
-
 class SyntaxContext:
     def __init__(self, diagnostics: DiagnosticManager = None):
         self.__diagnostics = diagnostics if diagnostics is not None else DiagnosticManager()
-        self.__scopes = {}
         self.__parents = {}
 
     @property
     def diagnostics(self) -> DiagnosticManager:
         return self.__diagnostics
-
-    def get_scope(self, node: SyntaxNode) -> SyntaxScope:
-        return self.__scopes[node]
 
     def get_parent(self, node: SyntaxNode) -> Optional[SyntaxNode]:
         return self.__parents[node]
@@ -302,9 +195,6 @@ class SyntaxContext:
         if not isinstance(parent, SyntaxNode):
             raise RuntimeError('Required syntax node')
 
-        self.__scopes[parent] = self.annotate_scope(parent)
-        self.declare_symbol(parent)
-
         for child in parent.children:
             if isinstance(child, SyntaxSymbol):
                 child.parent = parent
@@ -312,21 +202,6 @@ class SyntaxContext:
                     self.annotate(child)
             else:
                 raise RuntimeError('Required syntax node')
-
-    def annotate_scope(self, node: SyntaxNode) -> SyntaxScope:
-        if isinstance(node, SyntaxTree):
-            return SyntaxScope(self, node)
-
-        parent = node.parent.scope
-        if isinstance(node, (FunctionNode, TypeDeclarationNode, BlockStatementNode)):
-            return SyntaxScope(self, node, parent)
-        return parent
-
-    def declare_symbol(self, node: SyntaxNode):
-        if not isinstance(node, (FunctionNode, TypeDeclarationNode, ParameterNode)):
-            return
-
-        node.declare_scope.declare(node.name, node)
 
 
 class SyntaxNode(SyntaxSymbol, abc.ABC):
@@ -366,16 +241,6 @@ class SyntaxNode(SyntaxSymbol, abc.ABC):
         if not self.children:
             return self.location.end
         return self.children[-1].location.end
-
-    @property
-    def declare_scope(self) -> SyntaxScope:
-        if not self.parent:
-            return self.scope
-        return self.parent.scope
-
-    @property
-    def scope(self) -> SyntaxScope:
-        return self.context.get_scope(self)
 
     @property
     @abc.abstractmethod

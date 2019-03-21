@@ -1,0 +1,7 @@
+# EXIT: 10
+def main() -> int:
+    i: int = 0
+    while i < 10:
+        i += 1
+    else:
+        return i

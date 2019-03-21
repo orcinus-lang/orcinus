@@ -1,0 +1,10 @@
+# EXIT: 3
+def main() -> int:
+    if False:
+        return 0
+    elif False:
+        return 1
+    elif False:
+        return 2
+    else:
+        return 3

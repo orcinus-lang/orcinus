@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import abc
+import contextlib
 import weakref
 from io import StringIO
 from typing import cast, Sequence, Optional, Set
@@ -106,8 +107,7 @@ class Symbol(abc.ABC):
         raise NotImplementedError
 
     def __repr__(self):
-        class_name = type(self).__name__
-        return f'<{class_name}: {self}>'
+        return f'<{type(self).__name__}: {self}>'
 
 
 class Named(Symbol, abc.ABC):
@@ -991,6 +991,8 @@ class BasicBlock:
         self.__owner = owner
         self.__name = name
         self.__instructions = []
+        self.__predecessors = set()
+        self.__successors = set()
 
     @property
     def owner(self) -> Function:
@@ -1009,28 +1011,64 @@ class BasicBlock:
         self.__name = self.owner.scope.add(value, self.__name)
 
     @property
-    def is_terminated(self) -> bool:
-        if not self.instructions:
-            return False
-        return self.instructions[-1].is_terminator
+    def predecessors(self) -> Set[BasicBlock]:
+        return self.__predecessors
+
+    @property
+    def successors(self) -> Set[BasicBlock]:
+        return self.__successors
 
     @property
     def instructions(self) -> Sequence[Instruction]:
         return self.__instructions
 
+    @property
+    def is_terminated(self) -> bool:
+        if not self.instructions:
+            return False
+        return self.instructions[-1].is_terminator
+
     def append(self, inst: Instruction):
         if self.is_terminated:
             raise RuntimeError(u'Can not add instruction to terminated block')
 
+        elif inst.block:
+            raise RuntimeError(u'Can not move instruction from another block')
+
+        # inject instruction
         inst.block = self
         self.__instructions.append(inst)
 
+        # successors and predecessor
+        for block in inst.successors:
+            self.__successors.add(block)
+            block.__predecessors.add(self)
+
+    def __str__(self):
+        return self.name
+
+    def __repr__(self):
+        return f'<{type(self).__name__}: {self}>'
+
     def as_block(self) -> str:
         buffer = StringIO()
-        buffer.write("{}:\n".format(self.name))
+        buffer.write(f"%{self.name}:")
+
+        if self.predecessors:
+            buffer.write(' ;')
+            for idx, previous in enumerate(self.predecessors):
+                if idx:
+                    buffer.write(', ')
+                buffer.write(f'%{previous}')
+        buffer.write('\n')
+
         for inst in self.instructions:
             buffer.write("    {}\n".format(inst.as_inst()))
         return buffer.getvalue()
+
+    @property
+    def debug_string(self) -> str:
+        return self.as_block()
 
 
 class Instruction(Value, abc.ABC):
@@ -1066,6 +1104,10 @@ class Instruction(Value, abc.ABC):
     @property
     def is_terminator(self) -> bool:
         return False
+
+    @property
+    def successors(self) -> Set[BasicBlock]:
+        return set()
 
     @abc.abstractmethod
     def as_inst(self) -> str:
@@ -1112,10 +1154,14 @@ class BranchInstruction(TerminatorInstruction):
         self.then_block = then_block
         self.else_block = else_block
 
+    @cached_property
+    def successors(self) -> Set[BasicBlock]:
+        return {self.then_block, self.else_block} if self.else_block else {self.then_block}
+
     def as_inst(self) -> str:
         if self.condition:
-            return 'br {} {} {}'.format(self.condition.as_val(), self.then_block, self.else_block)
-        return 'br {}'.format(self.then_block)
+            return 'br {} %{} %{}'.format(self.condition.as_val(), self.then_block, self.else_block)
+        return 'br %{}'.format(self.then_block)
 
 
 class AllocaInstruction(Instruction):
@@ -1245,6 +1291,13 @@ class IRBuilder:
     def is_terminated(self) -> bool:
         return self.block.is_terminated
 
+    @contextlib.contextmanager
+    def goto_block(self, block: BasicBlock):
+        old_block = self.block
+        self.position_at(block)
+        yield block
+        self.position_at(old_block)
+
     def get_default_value(self, value_type: Type, *, location: Location):
         if isinstance(value_type, BooleanType):
             return BooleanConstant(self.context, False, location)
@@ -1256,7 +1309,7 @@ class IRBuilder:
         self.context.diagnostics.error(location, "Type `{}` doesn't have a default values".format(value_type))
         return ErrorValue(self.module, location)
 
-    def append_basic_block(self, name: str):
+    def append_basic_block(self, name: str) -> BasicBlock:
         return self.function.append_basic_block(name)
 
     def position_at(self, block: BasicBlock):
