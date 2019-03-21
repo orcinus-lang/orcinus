@@ -10,6 +10,8 @@ import weakref
 from io import StringIO
 from typing import cast, Sequence, Optional, Set
 
+from more_itertools import first
+
 from orcinus.collections import NamedScope
 from orcinus.diagnostics import DiagnosticManager
 from orcinus.locations import Location
@@ -166,6 +168,9 @@ class Container(Symbol, abc.ABC):
 
         self.__members.append(symbol)
         self.on_add_member(self, symbol)
+
+    def get_member(self, name: str) -> Optional[Child]:
+        return first((member for member in self.members if member.name == name), None)
 
 
 class ErrorSymbol(Container):
@@ -1197,7 +1202,7 @@ class StoreInstruction(Instruction):
 
 
 class CallInstruction(Instruction):
-    def __init__(self, func: Function, arguments: Sequence[Value], *, name: str=None, location: Location):
+    def __init__(self, func: Function, arguments: Sequence[Value], *, name: str = None, location: Location):
         super(CallInstruction, self).__init__(func.return_type, name=name, location=location)
 
         assert isinstance(func, Function)

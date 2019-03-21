@@ -34,7 +34,7 @@ class TokenID(enum.IntEnum):
     Continue = enum.auto()
     Def = enum.auto()
     Dot = enum.auto()
-    Double = enum.auto()
+    Float = enum.auto()
     DoubleCircumflex = enum.auto()
     DoubleSlash = enum.auto()
     DoubleSlashEqual = enum.auto()
@@ -1721,6 +1721,27 @@ class IntegerExpressionNode(ExpressionNode):
         return [self.token_number]
 
 
+class FloatExpressionNode(ExpressionNode):
+    token_number: SyntaxToken
+
+    def __init__(self, context: SyntaxContext, token_number: SyntaxToken):
+        super(FloatExpressionNode, self).__init__(context)
+
+        self.token_number = token_number
+
+    @property
+    def location(self) -> Location:
+        return self.token_number.location
+
+    @property
+    def value(self) -> float:
+        return float(self.token_number.value)
+
+    @property
+    def children(self) -> Sequence[SyntaxSymbol]:
+        return [self.token_number]
+
+
 class StringExpressionNode(ExpressionNode):
     token_string: SyntaxToken
 
@@ -2465,6 +2486,9 @@ class AbstractExpressionVisitor(Generic[R], abc.ABC):
     def visit_integer_expression(self, node: IntegerExpressionNode) -> R:
         return self.visit_expression(node)
 
+    def visit_float_expression(self, node: FloatExpressionNode) -> R:
+        return self.visit_expression(node)
+
     def visit_string_expression(self, node: StringExpressionNode) -> R:
         return self.visit_expression(node)
 
@@ -2512,6 +2536,8 @@ class ExpressionVisitor(AbstractExpressionVisitor[R], abc.ABC):
     def visit(self, node: ExpressionNode) -> R:
         if isinstance(node, IntegerExpressionNode):
             return self.visit_integer_expression(node)
+        elif isinstance(node, FloatExpressionNode):
+            return self.visit_float_expression(node)
         elif isinstance(node, StringExpressionNode):
             return self.visit_string_expression(node)
         elif isinstance(node, NamedExpressionNode):
@@ -2598,6 +2624,8 @@ class NodeVisitor(Generic[R],
             return self.visit_variable_statement(node)
         elif isinstance(node, IntegerExpressionNode):
             return self.visit_integer_expression(node)
+        elif isinstance(node, FloatExpressionNode):
+            return self.visit_float_expression(node)
         elif isinstance(node, StringExpressionNode):
             return self.visit_string_expression(node)
         elif isinstance(node, NamedExpressionNode):

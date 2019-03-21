@@ -22,7 +22,7 @@ class ModuleEmitter:
         self.__llvm_module = ir.Module(name)
         self.__llvm_module.triple = binding.Target.from_default_triple().triple
         self.__llvm_ref = None
-        self.__is_normalize = False
+        self.__is_normalize = True
         self.__llvm_types = LazyDictionary[Type, ir.Type](constructor=self.declare_type)
         self.__llvm_functions = LazyDictionary[Function, ir.Function](constructor=self.declare_function)
 
@@ -71,7 +71,10 @@ class ModuleEmitter:
         llvm_arguments = [self.llvm_types[param.type] for param in func.parameters]
         llvm_returns = self.llvm_types[func.return_type]
         llvm_type = ir.FunctionType(llvm_returns, llvm_arguments)
-        return ir.Function(self.llvm_module, llvm_type, func.native_name or func.name)
+        llvm_func = ir.Function(self.llvm_module, llvm_type, func.native_name or func.name)
+        for param, arg in zip(func.parameters, llvm_func.args):
+            arg.name = param.name
+        return llvm_func
 
     def declare_type(self, symbol: Type) -> ir.Type:
         if isinstance(symbol, BooleanType):
@@ -102,6 +105,7 @@ class FunctionEmitter:
         self.llvm_function = llvm_func
         self.llvm_blocks = {}
         self.llvm_instructions = {}
+        self.llvm_parameters = {}
         self.llvm_builder = None
 
     @property
@@ -113,6 +117,10 @@ class FunctionEmitter:
         return self.parent.llvm_functions
 
     def emit(self):
+        # generate parameters
+        for param, arg in zip(self.function.parameters, self.llvm_function.args):
+            self.llvm_parameters[param] = arg
+
         # generate blocks
         for block in self.function.blocks:
             self.llvm_blocks[block] = self.llvm_function.append_basic_block(block.name)
@@ -131,6 +139,8 @@ class FunctionEmitter:
             return ir.Constant(self.llvm_types[value.type], value.value)
         elif isinstance(value, NoneConstant):
             return ir.Constant.literal_struct([])
+        elif isinstance(value, Parameter):
+            return self.llvm_parameters[value]
         elif isinstance(value, Instruction):
             llvm_inst = self.llvm_instructions.get(value)
             if not llvm_inst:

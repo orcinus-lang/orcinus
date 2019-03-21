@@ -335,6 +335,9 @@ class LocalEnvironment(SemanticEnvironment):
         yield scope
         self.pop()
 
+    def resolve(self, name: str) -> Optional[Symbol]:
+        return super().resolve(name) or self.globals.resolve(name)
+
 
 class SemanticScope:
     def __init__(self, parent: SemanticScope = None):
@@ -815,9 +818,9 @@ class FunctionResolver(SemanticMixin):
         self.candidates = []
 
     def add_scope_functions(self, environment: SemanticEnvironment, name: str):
-        node = scope.resolve(name)
-        if isinstance(node, (FunctionNode, OverloadNode)):
-            self.candidates.extend(self.symbols[node].as_functions(self.location))
+        function = environment.resolve(name)
+        if isinstance(function, Function):
+            self.candidates.append(function)
 
     def add_type_functions(self, type: Type, name: str):
         functions = (member for member in type.members if isinstance(member, Function) and member.name == name)
@@ -1226,7 +1229,8 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         pass
 
     def visit_return_statement(self, node: ReturnStatementNode):
-        value = self.emit_expression(node.value) or NoneConstant(self.symbol_context, node.location)
+        value = self.emit_expression(node.value) if node.value else None
+        value = value or NoneConstant(self.symbol_context, node.location)
         self.parent.emit_return(value, value.location)
 
         # TODO: Unreachable code
@@ -1445,6 +1449,19 @@ class ExpressionEmitter(FunctionMixin, ExpressionAnnotator):
             function, arguments = result
             return self.builder.call(function, arguments, location=node.location)
 
+    def visit_call_expression(self, node: CallExpressionNode) -> Symbol:
+        arguments = [self.emit_expression(arg) for arg in node.arguments]
+        keywords = {name: self.emit_expression(arg) for name, arg in node.keywords.items()}
+
+        emitter = CallEmitter(self.parent, arguments, keywords, node.location)
+        return emitter.visit(node.instance)
+
+    def visit_tuple_expression(self, node: TupleExpressionNode):
+        if len(node.arguments) != 1:
+            self.diagnostics.error(self.location, f"Tuple value is not implemented")  # TODO: Normal message
+            return ErrorValue(self.module, self.location)
+        return self.emit_expression(node.arguments[0])
+
 
 class AssignmentEmitter(FunctionMixin, ExpressionVisitor[None]):
     def __init__(self, parent: FunctionEmitter, source: Value, location: Location):
@@ -1462,3 +1479,66 @@ class AssignmentEmitter(FunctionMixin, ExpressionVisitor[None]):
             self.builder.store(symbol, self.source, location=self.location)
         else:
             self.diagnostics.error(self.location, 'Can not assign value')
+
+
+class CallEmitter(FunctionMixin, ExpressionVisitor[Value]):
+    def __init__(self,
+                 parent: FunctionEmitter,
+                 arguments: Sequence[Value],
+                 keywords: Mapping[str, Value],
+                 location: Location):
+
+        super(CallEmitter, self).__init__(parent)
+
+        self.arguments = list(arguments)
+        self.keywords = keywords
+        self.location = location
+
+    def emit_named(self, name: str):
+        resolver = FunctionResolver(self.model, self.arguments, self.keywords, location=self.location)
+        resolver.add_scope_functions(self.environment, name)
+        resolver.add_self_functions(name)
+        result = resolver.find_function()
+
+        if not result:
+            self.diagnostics.error(self.location, f"Not found method ‘{name}’")  # TODO: Normal message
+            return ErrorValue(self.module, self.location)
+
+        function, arguments = result
+        return self.builder.call(function, arguments, location=self.location)
+
+    def emit_constructor(self, clazz: Type):
+        resolver = FunctionResolver(self.model, self.arguments, self.keywords, location=self.location)
+        resolver.add_type_functions(clazz, NEW_NAME)
+        result = resolver.find_function()
+
+        if not result:
+            self.diagnostics.error(self.location, f"Not found method ‘{NEW_NAME}’")  # TODO: Normal message
+            return ErrorValue(self.module, self.location)
+
+        function, arguments = result
+        return self.builder.call(function, arguments, location=self.location)
+
+    def visit_expression(self, node: ExpressionNode):
+        self.arguments.insert(0, self.emit_expression(node))
+        return self.emit_named('__call__')
+
+    def visit_named_expression(self, node: NamedExpressionNode):
+        symbol = self.search_named_symbol(node.name, node.location)
+        if isinstance(symbol, Type):
+            return self.emit_constructor(symbol)
+        return self.emit_named(node.name)
+
+    def visit_attribute_expression(self, node: AttributeExpressionNode):
+        value = self.emit_expression(node.instance)
+        if isinstance(value, Value):
+            member = value.type.get_member(node.name)
+            if not member or isinstance(member, Function):
+                self.arguments.insert(0, value)
+                return self.emit_named(node.name)
+
+            self.arguments.insert(0, self.emit_expression(node))
+            return self.emit_named('__call__')
+
+        self.diagnostics.error(self.location, f"Not implemented call’")  # TODO: Normal message
+        return ErrorValue(self.module, self.location)

@@ -19,7 +19,8 @@ setup(
         'multidict==4.5.2',
         'colorlog==3.1.4',
         'pytest==4.3.0',
-        'json-rpc==1.12.1'
+        'json-rpc==1.12.1',
+        'more-itertools==6.0.0',
     ],
     extras_require={
         'mkdocs': [

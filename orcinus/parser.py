@@ -27,20 +27,13 @@ MEMBER_STARTS: Set[TokenID] = {
 }
 TARGET_STARTS: Set[TokenID] = {
     TokenID.Name,
-    TokenID.Integer,
-    TokenID.String,
-    TokenID.Double,
     TokenID.LeftParenthesis,
     TokenID.LeftSquare,
-    TokenID.Tilde,
-    TokenID.Plus,
-    TokenID.Minus,
 }
 EXPRESSION_STARTS: Set[TokenID] = TARGET_STARTS | {
-    TokenID.Name,
     TokenID.Integer,
+    TokenID.Float,
     TokenID.String,
-    TokenID.Double,
     TokenID.LeftParenthesis,
     TokenID.LeftSquare,
     TokenID.LeftCurly,
@@ -87,9 +80,10 @@ NAMED_MEMBER_STARTS: Set[TokenID] = {
     TokenID.Colon,
 }
 PRIMARY_STARTS: Set[TokenID] = {
-    TokenID.Integer,
-    TokenID.String,
     TokenID.Name,
+    TokenID.Integer,
+    TokenID.Float,
+    TokenID.String,
     TokenID.LeftParenthesis,
     TokenID.LeftSquare,
     TokenID.LeftCurly,
@@ -1591,6 +1585,8 @@ class Parser:
         # """
         if self.match(TokenID.Integer):
             expression = self.parse_integer_expression()
+        elif self.match(TokenID.Float):
+            expression = self.parse_float_expression()
         elif self.match(TokenID.String):
             expression = self.parse_string_expression()
         elif self.match(TokenID.Name):
@@ -1610,12 +1606,22 @@ class Parser:
     def parse_integer_expression(self) -> ExpressionNode:
         # """
         # number:
-        #     Number
+        #     Integer
         # """
         token_number = self.consume(TokenID.Integer)
 
         # noinspection PyArgumentList
         return IntegerExpressionNode(self.context, token_number)
+
+    def parse_float_expression(self) -> ExpressionNode:
+        # """
+        # number:
+        #     Float
+        # """
+        token_number = self.consume(TokenID.Float)
+
+        # noinspection PyArgumentList
+        return FloatExpressionNode(self.context, token_number)
 
     def parse_string_expression(self) -> ExpressionNode:
         # """

@@ -4,4 +4,4 @@ def identity(i: int) -> int:
     return i
 
 def main() -> int:
-    return (10).identity()
+    return identity(10)

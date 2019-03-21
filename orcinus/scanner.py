@@ -170,6 +170,8 @@ class Scanner:
         if self.current_symbol == end_symbol:
             self.advance_symbol()
             return TokenID.String
+
+        self.diagnostics.error("Not found close quote while scanning string literal")
         return TokenID.Error
 
     def consume_keyword(self) -> TokenID:
@@ -293,11 +295,9 @@ class Scanner:
 
             if self.current_symbol == '.':
                 self.advance_symbol()
-                if not self.current_symbol.isnumeric():
-                    return TokenID.Error
                 while self.current_symbol.isnumeric():
                     self.advance_symbol()
-                return TokenID.Double
+                return TokenID.Float
             return TokenID.Integer
 
         # Name and keywords: [\w_][\w\d_]*
