@@ -4,6 +4,7 @@
 # of the MIT license.  See the LICENSE file for details.
 from __future__ import annotations
 
+import itertools
 import logging
 from typing import Mapping
 
@@ -19,11 +20,11 @@ logger = logging.getLogger('orcinus.codegen')
 class ModuleEmitter:
     def __init__(self, name: str):
         # create llvm module
-        self.__llvm_module = ir.Module(name)
+        self.__llvm_module = ir.Module(name, context=ir.Context())
         self.__llvm_module.triple = binding.Target.from_default_triple().triple
         self.__llvm_ref = None
         self.__is_normalize = True
-        self.__llvm_types = LazyDictionary[Type, ir.Type](constructor=self.declare_type)
+        self.__llvm_types = LazyDictionary[Type, ir.Type](constructor=self.declare_type, initializer=self.emit_type)
         self.__llvm_functions = LazyDictionary[Function, ir.Function](constructor=self.declare_function)
 
     @property
@@ -41,6 +42,11 @@ class ModuleEmitter:
     @property
     def llvm_functions(self) -> Mapping[Function, ir.Function]:
         return self.__llvm_functions
+
+    @cached_property
+    def llvm_malloc(self):
+        llvm_type = ir.FunctionType(ir.IntType(8).as_pointer(), [ir.IntType(64)])
+        return ir.Function(self.llvm_module, llvm_type, 'malloc')
 
     @property
     def is_normalize(self) -> bool:
@@ -74,6 +80,8 @@ class ModuleEmitter:
         llvm_func = ir.Function(self.llvm_module, llvm_type, func.native_name or func.name)
         for param, arg in zip(func.parameters, llvm_func.args):
             arg.name = param.name
+        llvm_func.linkage = 'external' if func.is_abstract or func.name == 'main' else 'internal'
+
         return llvm_func
 
     def declare_type(self, symbol: Type) -> ir.Type:
@@ -83,15 +91,28 @@ class ModuleEmitter:
             return ir.IntType(64)
         elif isinstance(symbol, VoidType):
             return ir.LiteralStructType([])
+        elif isinstance(symbol, VoidType):
+            return ir.LiteralStructType([])
+        elif isinstance(symbol, ClassType):
+            return self.llvm_context.get_identified_type(symbol.name).as_pointer()
 
         raise DiagnosticError(symbol.location, f'Conversion to LLVM is not implemented: {type(symbol).__name__}')
+
+    def emit_type(self, symbol: Type):
+        if isinstance(symbol, ClassType):
+            llvm_fields = []
+            for field in symbol.fields:
+                llvm_fields.append(self.llvm_types[field.type])
+
+            llvm_struct: ir.IdentifiedStructType = cast(ir.PointerType, self.llvm_types[symbol]).pointee
+            llvm_struct.set_body(*llvm_fields)
 
     def emit_function(self, func: Function):
         emitter = FunctionEmitter(self, func, self.llvm_functions[func])
         emitter.emit()
 
     def emit(self, module: Module):
-        for func in module.functions:
+        for func in module.declared_functions:
             if not func.is_generic and not func.is_abstract:
                 self.emit_function(func)
 
@@ -162,6 +183,12 @@ class FunctionEmitter:
             result = self.emit_load_instruction(inst)
         elif isinstance(inst, CallInstruction):
             result = self.emit_call_instruction(inst)
+        elif isinstance(inst, NewInstruction):
+            result = self.emit_new_instruction(inst)
+        elif isinstance(inst, InsertValueInstruction):
+            result = self.emit_insert_value_instruction(inst)
+        elif isinstance(inst, ExtractValueInstruction):
+            result = self.emit_extract_value_instruction(inst)
         else:
             raise DiagnosticError(inst.location, f'Conversion to LLVM is not implemented: {type(inst).__name__}')
 
@@ -197,6 +224,7 @@ class FunctionEmitter:
 
     def emit_call_instruction(self, inst: CallInstruction) -> ir.Value:
         llvm_arguments = [self.get_value(arg) for arg in inst.arguments]
+
         # TODO: Builtins calls
         if inst.function.name == '__neg__':
             return self.llvm_builder.neg(llvm_arguments[0], name=inst.name)
@@ -221,6 +249,37 @@ class FunctionEmitter:
 
         llvm_function = self.llvm_functions[inst.function]
         return self.llvm_builder.call(llvm_function, llvm_arguments, name=inst.name)
+
+    def emit_new_instruction(self, inst: NewInstruction) -> ir.Value:
+        llvm_struct: ir.PointerType = cast(ir.PointerType, self.llvm_types[inst.type])
+        llvm_offset = self.llvm_builder.gep(ir.Constant(llvm_struct, None), [ir.Constant(ir.IntType(32), 1)])
+        llvm_sizeof = self.llvm_builder.ptrtoint(llvm_offset, ir.IntType(64))
+        llvm_pointer = self.llvm_builder.call(self.parent.llvm_malloc, [llvm_sizeof])
+        llvm_instance = self.llvm_builder.bitcast(llvm_pointer, llvm_struct)
+
+        llvm_arguments = list(itertools.chain((llvm_instance,), (self.get_value(arg) for arg in inst.arguments)))
+        llvm_function = self.llvm_functions[inst.function]
+        self.llvm_builder.call(llvm_function, llvm_arguments, name=inst.name)
+        return llvm_instance
+
+    def emit_insert_value_instruction(self, inst: InsertValueInstruction) -> ir.Value:
+        index = inst.instance.type.fields.index(inst.field)
+        llvm_instance = self.get_value(inst.instance)
+        llvm_index = self.llvm_builder.gep(llvm_instance, [
+            ir.Constant(ir.IntType(32), 0),
+            ir.Constant(ir.IntType(32), index),
+        ])
+        llvm_value = self.get_value(inst.source)
+        return self.llvm_builder.store(llvm_value, llvm_index)
+
+    def emit_extract_value_instruction(self, inst: ExtractValueInstruction) -> ir.Value:
+        index = inst.instance.type.fields.index(inst.field)
+        llvm_instance = self.get_value(inst.instance)
+        llvm_index = self.llvm_builder.gep(llvm_instance, [
+            ir.Constant(ir.IntType(32), 0),
+            ir.Constant(ir.IntType(32), index),
+        ])
+        return self.llvm_builder.load(llvm_index)
 
 
 def initialize_codegen():

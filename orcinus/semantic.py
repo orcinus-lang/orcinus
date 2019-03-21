@@ -441,7 +441,7 @@ class SemanticInitializer(SemanticMixin):
             if isinstance(member, Child):
                 type.add_member(member)
 
-        # symbol.type.build()
+        type.build()
 
     def initialize_function(self, node: FunctionNode):
         function = cast(Function, self.symbols[node])
@@ -1376,7 +1376,7 @@ class ExpressionEmitter(FunctionMixin, ExpressionAnnotator):
         if isinstance(instance, Value):
             member = instance.type.get_member(node.name)
             if isinstance(member, Field):
-                return self.
+                return self.builder.extract_value(instance, member, name=node.name, location=node.location)
             else:
                 self.diagnostics.error(node.location, 'Can not load value to expression')
         else:

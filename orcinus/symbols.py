@@ -1218,8 +1218,8 @@ class CallInstruction(Instruction):
 
 
 class NewInstruction(Instruction):
-    def __init__(self, func: Function, arguments: Sequence[Value], location: Location):
-        super(NewInstruction, self).__init__(func.parameters[0].type, location)
+    def __init__(self, func: Function, arguments: Sequence[Value], *, name: str = None, location: Location):
+        super(NewInstruction, self).__init__(func.parameters[0].type, name=name, location=location)
 
         assert isinstance(func, Function)
         assert all(isinstance(arg, Value) for arg in arguments)
@@ -1234,8 +1234,8 @@ class NewInstruction(Instruction):
 
 
 class ExtractValueInstruction(Instruction):
-    def __init__(self, instance: Value, field: Field, location: Location):
-        super(ExtractValueInstruction, self).__init__(field.type, location)
+    def __init__(self, instance: Value, field: Field, *, name: str = None, location: Location):
+        super(ExtractValueInstruction, self).__init__(field.type, name=name, location=location)
 
         self.instance = instance
         self.field = field
@@ -1247,7 +1247,7 @@ class ExtractValueInstruction(Instruction):
 class InsertValueInstruction(Instruction):
     def __init__(self, instance: Value, field: Field, source: Value, location: Location):
         context = instance.context
-        super(InsertValueInstruction, self).__init__(context.void_type, location)
+        super(InsertValueInstruction, self).__init__(context.void_type, location=location)
 
         self.instance = instance
         self.field = field
@@ -1334,7 +1334,7 @@ class IRBuilder:
         return self.__append(CallInstruction(func, arguments, name=name, location=location))
 
     def new(self, func: Function, arguments: Sequence[Value], *, name: str = None, location: Location) -> Instruction:
-        return self.__append(NewInstruction(func, arguments, location=location))
+        return self.__append(NewInstruction(func, arguments, name=name, location=location))
 
     def insert_value(self, instance: Value, field: Field, source: Value, *, location):
         return self.__append(InsertValueInstruction(instance, field, source, location=location))
