@@ -104,12 +104,11 @@ def load_source_content(location: Location, before: int = 2, after: int = 2):
 
             idx = 0
             results = []
-            for idx, line in itertools.islice(enumerate(stream), at_before, at_after):
+            for idx, line in itertools.islice(enumerate(stream), at_before, at_after - 2):
                 results.append((idx + 1, line.rstrip("\n")))
     except IOError:
         return []
     else:
-        results.append([idx + 2, ""])
         return results
 
 

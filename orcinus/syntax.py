@@ -7,11 +7,12 @@ from __future__ import annotations
 import abc
 import enum
 import weakref
-from typing import Sequence, Iterator, Optional, Union, Iterable, TypeVar, Callable, Mapping
+from typing import Sequence, Iterator, Optional, Union, Iterable, TypeVar, Callable, Mapping, Generic
 
 from multidict import MultiDict
 
 from orcinus.diagnostics import DiagnosticManager
+from orcinus.exceptions import DiagnosticError
 from orcinus.locations import Location, Position
 from orcinus.utils import cached_property
 
@@ -665,7 +666,7 @@ class MemberNode(SyntaxNode, abc.ABC):
     pass
 
 
-class PassMemberNode(MemberNode, abc.ABC):
+class PassMemberNode(MemberNode):
     token_pass: SyntaxToken
     token_newline: SyntaxToken
 
@@ -2119,14 +2120,26 @@ class CallExpressionNode(ExpressionNode):
 
 class SubscribeExpressionNode(ExpressionNode):
     instance: ExpressionNode
+    token_open: SyntaxToken
     arguments: SyntaxCollection[Union[ExpressionNode, SliceArgumentNode]]
+    token_close: SyntaxToken
 
-    def __init__(self, context: SyntaxContext, instance: ExpressionNode,
-                 arguments: SyntaxCollection[Union[ExpressionNode, SliceArgumentNode]], location: Location):
+    def __init__(self,
+                 context: SyntaxContext,
+                 instance: ExpressionNode,
+                 token_open: SyntaxToken,
+                 arguments: SyntaxCollection[Union[ExpressionNode, SliceArgumentNode]],
+                 token_close: SyntaxToken):
         super(SubscribeExpressionNode, self).__init__(context)
 
         self.instance = instance
+        self.token_open = token_open
         self.arguments = arguments
+        self.token_close = token_close
+
+    @property
+    def location(self) -> Location:
+        return self.instance.location + self.token_close.location
 
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
@@ -2300,7 +2313,473 @@ class SliceArgumentNode(SyntaxNode, abc.ABC):
         return make_sequence([self.lower_bound, self.upper_bound, self.stride])
 
 
-def make_sequence(sequence: Iterable[object]) -> Sequence[SyntaxNode]:
+R = TypeVar('R')
+
+
+class AbstractImportVisitor(Generic[R], abc.ABC):
+    @abc.abstractmethod
+    def visit_import(self, node: ImportNode) -> R:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def visit_from_import(self, node: ImportFromNode) -> R:
+        raise NotImplementedError
+
+
+class ImportVisitor(AbstractImportVisitor[R], abc.ABC):
+    def visit(self, node: TypeNode) -> R:
+        if isinstance(node, ImportFromNode):
+            return self.visit_from_import(node)
+        elif isinstance(node, ImportNode):
+            return self.visit_import(node)
+
+        raise DiagnosticError(node.location, f"Not implemented visitor for {type(node).__name__}")
+
+
+class AbstractTypeVisitor(Generic[R], abc.ABC):
+    @abc.abstractmethod
+    def visit_type(self, node: TypeNode) -> R:
+        raise NotImplementedError
+
+    def visit_named_type(self, node: NamedTypeNode) -> R:
+        return self.visit_type(node)
+
+    def visit_parameterized_type(self, node: ParameterizedTypeNode) -> R:
+        return self.visit_type(node)
+
+    def visit_auto_type(self, node: AutoTypeNode) -> R:
+        return self.visit_type(node)
+
+
+class TypeVisitor(AbstractTypeVisitor[R], abc.ABC):
+    def visit(self, node: TypeNode) -> R:
+        if isinstance(node, NamedTypeNode):
+            return self.visit_named_type(node)
+        elif isinstance(node, ParameterizedTypeNode):
+            return self.visit_parameterized_type(node)
+        elif isinstance(node, AutoTypeNode):
+            return self.visit_auto_type(node)
+
+        raise DiagnosticError(node.location, f"Not implemented visitor for {type(node).__name__}")
+
+
+class AbstractMemberVisitor(Generic[R], abc.ABC):
+    @abc.abstractmethod
+    def visit_member(self, node: MemberNode) -> R:
+        raise NotImplementedError
+
+    def visit_pass_member(self, node: PassMemberNode) -> R:
+        return self.visit_member(node)
+
+    def visit_enum_member(self, node: EnumMemberNode) -> R:
+        return self.visit_member(node)
+
+    def visit_field(self, node: FieldNode) -> R:
+        return self.visit_member(node)
+
+    def visit_function(self, node: FunctionNode) -> R:
+        return self.visit_member(node)
+
+    def visit_type_declaration(self, node: TypeDeclarationNode) -> R:
+        return self.visit_member(node)
+
+    def visit_class(self, node: ClassNode) -> R:
+        return self.visit_type_declaration(node)
+
+    def visit_struct(self, node: StructNode) -> R:
+        return self.visit_type_declaration(node)
+
+    def visit_interface(self, node: InterfaceNode) -> R:
+        return self.visit_type_declaration(node)
+
+    def visit_enum(self, node: EnumNode) -> R:
+        return self.visit_type_declaration(node)
+
+
+class MemberVisitor(AbstractMemberVisitor[R], abc.ABC):
+    def visit(self, node: MemberNode) -> R:
+        if isinstance(node, PassMemberNode):
+            return self.visit_pass_member(node)
+        elif isinstance(node, EnumMemberNode):
+            return self.visit_enum_member(node)
+        elif isinstance(node, FieldNode):
+            return self.visit_field(node)
+        elif isinstance(node, FunctionNode):
+            return self.visit_function(node)
+        elif isinstance(node, ClassNode):
+            return self.visit_class(node)
+        elif isinstance(node, StructNode):
+            return self.visit_struct(node)
+        elif isinstance(node, InterfaceNode):
+            return self.visit_interface(node)
+        elif isinstance(node, EnumNode):
+            return self.visit_enum(node)
+
+        raise DiagnosticError(node.location, f"Not implemented visitor for {type(node).__name__}")
+
+
+class AbstractStatementVisitor(Generic[R], abc.ABC):
+    @abc.abstractmethod
+    def visit_statement(self, node: StatementNode) -> R:
+        raise NotImplementedError
+
+    def visit_block_statement(self, node: BlockStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_pass_statement(self, node: PassStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_return_statement(self, node: ReturnStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_yield_statement(self, node: YieldStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_assign_statement(self, node: AssignStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_augmented_assign_statement(self, node: AugmentedAssignStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_expression_statement(self, node: ExpressionStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_break_statement(self, node: BreakStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_continue_statement(self, node: ContinueStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_condition_statement(self, node: ConditionStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_while_statement(self, node: WhileStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_for_statement(self, node: ForStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_ellipsis_statement(self, node: EllipsisStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_else_statement(self, node: ElseStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_finally_statement(self, node: FinallyStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_raise_statement(self, node: RaiseStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_try_statement(self, node: TryStatementNode) -> R:
+        return self.visit_statement(node)
+
+    def visit_with_statement(self, node: WithStatementNode) -> R:
+        return self.visit_statement(node)
+
+
+class StatementVisitor(AbstractStatementVisitor[R], abc.ABC):
+    def visit(self, node: StatementNode) -> R:
+        if isinstance(node, ReturnStatementNode):
+            return self.visit_return_statement(node)
+        elif isinstance(node, YieldStatementNode):
+            return self.visit_yield_statement(node)
+        elif isinstance(node, PassStatementNode):
+            return self.visit_pass_statement(node)
+        elif isinstance(node, BreakStatementNode):
+            return self.visit_break_statement(node)
+        elif isinstance(node, ContinueStatementNode):
+            return self.visit_continue_statement(node)
+        elif isinstance(node, ConditionStatementNode):
+            return self.visit_condition_statement(node)
+        elif isinstance(node, WhileStatementNode):
+            return self.visit_while_statement(node)
+        elif isinstance(node, ForStatementNode):
+            return self.visit_for_statement(node)
+        elif isinstance(node, AssignStatementNode):
+            return self.visit_assign_statement(node)
+        elif isinstance(node, AugmentedAssignStatementNode):
+            return self.visit_augmented_assign_statement(node)
+        elif isinstance(node, EllipsisStatementNode):
+            return self.visit_ellipsis_statement(node)
+        elif isinstance(node, ElseStatementNode):
+            return self.visit_else_statement(node)
+        elif isinstance(node, FinallyStatementNode):
+            return self.visit_finally_statement(node)
+        elif isinstance(node, RaiseStatementNode):
+            return self.visit_raise_statement(node)
+        elif isinstance(node, TryStatementNode):
+            return self.visit_try_statement(node)
+        elif isinstance(node, WithStatementNode):
+            return self.visit_with_statement(node)
+        elif isinstance(node, BlockStatementNode):
+            return self.visit_block_statement(node)
+
+        raise DiagnosticError(node.location, f"Not implemented visitor for {type(node).__name__}")
+
+
+class AbstractExpressionVisitor(Generic[R], abc.ABC):
+    @abc.abstractmethod
+    def visit_expression(self, node: ExpressionNode) -> R:
+        raise NotImplementedError
+
+    def visit_integer_expression(self, node: IntegerExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_string_expression(self, node: StringExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_named_expression(self, node: NamedExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_attribute_expression(self, node: AttributeExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_unary_expression(self, node: UnaryExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_binary_expression(self, node: BinaryExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_logic_expression(self, node: LogicExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_compare_expression(self, node: CompareExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_condition_expression(self, node: ConditionExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_call_expression(self, node: CallExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_subscribe_expression(self, node: SubscribeExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_array_expression(self, node: ArrayExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_set_expression(self, node: SetExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_tuple_expression(self, node: TupleExpressionNode) -> R:
+        return self.visit_expression(node)
+
+    def visit_dict_expression(self, node: DictExpressionNode) -> R:
+        return self.visit_expression(node)
+
+
+class ExpressionVisitor(AbstractExpressionVisitor[R], abc.ABC):
+    def visit(self, node: ExpressionNode) -> R:
+        if isinstance(node, IntegerExpressionNode):
+            return self.visit_integer_expression(node)
+        elif isinstance(node, StringExpressionNode):
+            return self.visit_string_expression(node)
+        elif isinstance(node, NamedExpressionNode):
+            return self.visit_named_expression(node)
+        elif isinstance(node, AttributeExpressionNode):
+            return self.visit_attribute_expression(node)
+        elif isinstance(node, UnaryExpressionNode):
+            return self.visit_unary_expression(node)
+        elif isinstance(node, BinaryExpressionNode):
+            return self.visit_binary_expression(node)
+        elif isinstance(node, LogicExpressionNode):
+            return self.visit_logic_expression(node)
+        elif isinstance(node, CompareExpressionNode):
+            return self.visit_compare_expression(node)
+        elif isinstance(node, ConditionExpressionNode):
+            return self.visit_condition_expression(node)
+        elif isinstance(node, CallExpressionNode):
+            return self.visit_call_expression(node)
+        elif isinstance(node, SubscribeExpressionNode):
+            return self.visit_subscribe_expression(node)
+        elif isinstance(node, ArrayExpressionNode):
+            return self.visit_array_expression(node)
+        elif isinstance(node, SetExpressionNode):
+            return self.visit_set_expression(node)
+        elif isinstance(node, TupleExpressionNode):
+            return self.visit_tuple_expression(node)
+        elif isinstance(node, DictExpressionNode):
+            return self.visit_dict_expression(node)
+
+        raise DiagnosticError(node.location, f"Not implemented visitor for {type(node).__name__}")
+
+
+class NodeVisitor(Generic[R],
+                  AbstractImportVisitor[R],
+                  AbstractTypeVisitor[R],
+                  AbstractMemberVisitor[R],
+                  AbstractStatementVisitor[R],
+                  AbstractExpressionVisitor[R],
+                  abc.ABC):
+    def visit(self, node: SyntaxNode) -> R:
+        if isinstance(node, NamedTypeNode):
+            return self.visit_named_type(node)
+        elif isinstance(node, ParameterizedTypeNode):
+            return self.visit_parameterized_type(node)
+        elif isinstance(node, AutoTypeNode):
+            return self.visit_auto_type(node)
+        elif isinstance(node, ReturnStatementNode):
+            return self.visit_return_statement(node)
+        elif isinstance(node, YieldStatementNode):
+            return self.visit_yield_statement(node)
+        elif isinstance(node, PassStatementNode):
+            return self.visit_pass_statement(node)
+        elif isinstance(node, BreakStatementNode):
+            return self.visit_break_statement(node)
+        elif isinstance(node, ContinueStatementNode):
+            return self.visit_continue_statement(node)
+        elif isinstance(node, ConditionStatementNode):
+            return self.visit_condition_statement(node)
+        elif isinstance(node, WhileStatementNode):
+            return self.visit_while_statement(node)
+        elif isinstance(node, ForStatementNode):
+            return self.visit_for_statement(node)
+        elif isinstance(node, AssignStatementNode):
+            return self.visit_assign_statement(node)
+        elif isinstance(node, AugmentedAssignStatementNode):
+            return self.visit_augmented_assign_statement(node)
+        elif isinstance(node, EllipsisStatementNode):
+            return self.visit_ellipsis_statement(node)
+        elif isinstance(node, ElseStatementNode):
+            return self.visit_else_statement(node)
+        elif isinstance(node, FinallyStatementNode):
+            return self.visit_finally_statement(node)
+        elif isinstance(node, RaiseStatementNode):
+            return self.visit_raise_statement(node)
+        elif isinstance(node, TryStatementNode):
+            return self.visit_try_statement(node)
+        elif isinstance(node, WithStatementNode):
+            return self.visit_with_statement(node)
+        elif isinstance(node, BlockStatementNode):
+            return self.visit_block_statement(node)
+        elif isinstance(node, IntegerExpressionNode):
+            return self.visit_integer_expression(node)
+        elif isinstance(node, StringExpressionNode):
+            return self.visit_string_expression(node)
+        elif isinstance(node, NamedExpressionNode):
+            return self.visit_named_expression(node)
+        elif isinstance(node, AttributeExpressionNode):
+            return self.visit_attribute_expression(node)
+        elif isinstance(node, UnaryExpressionNode):
+            return self.visit_unary_expression(node)
+        elif isinstance(node, BinaryExpressionNode):
+            return self.visit_binary_expression(node)
+        elif isinstance(node, LogicExpressionNode):
+            return self.visit_logic_expression(node)
+        elif isinstance(node, CompareExpressionNode):
+            return self.visit_compare_expression(node)
+        elif isinstance(node, ConditionExpressionNode):
+            return self.visit_condition_expression(node)
+        elif isinstance(node, CallExpressionNode):
+            return self.visit_call_expression(node)
+        elif isinstance(node, SubscribeExpressionNode):
+            return self.visit_subscribe_expression(node)
+        elif isinstance(node, ArrayExpressionNode):
+            return self.visit_array_expression(node)
+        elif isinstance(node, SetExpressionNode):
+            return self.visit_set_expression(node)
+        elif isinstance(node, TupleExpressionNode):
+            return self.visit_tuple_expression(node)
+        elif isinstance(node, DictExpressionNode):
+            return self.visit_dict_expression(node)
+        elif isinstance(node, PassMemberNode):
+            return self.visit_pass_member(node)
+        elif isinstance(node, EnumMemberNode):
+            return self.visit_enum_member(node)
+        elif isinstance(node, FieldNode):
+            return self.visit_field(node)
+        elif isinstance(node, FunctionNode):
+            return self.visit_function(node)
+        elif isinstance(node, ClassNode):
+            return self.visit_class(node)
+        elif isinstance(node, StructNode):
+            return self.visit_struct(node)
+        elif isinstance(node, InterfaceNode):
+            return self.visit_interface(node)
+        elif isinstance(node, EnumNode):
+            return self.visit_enum(node)
+        elif isinstance(node, ImportFromNode):
+            return self.visit_from_import(node)
+        elif isinstance(node, ImportNode):
+            return self.visit_import(node)
+        elif isinstance(node, AliasNode):
+            return self.visit_alias(node)
+        elif isinstance(node, SyntaxTree):
+            return self.visit_tree(node)
+        elif isinstance(node, DecoratorNode):
+            return self.visit_decorator(node)
+        elif isinstance(node, ParameterNode):
+            return self.visit_parameter(node)
+        elif isinstance(node, ExceptHandlerNode):
+            return self.visit_except_handler(node)
+        elif isinstance(node, WithItemNode):
+            return self.visit_with_item(node)
+        elif isinstance(node, ComparatorNode):
+            return self.visit_comparator(node)
+        elif isinstance(node, PositionArgumentNode):
+            return self.visit_position_argument(node)
+        elif isinstance(node, KeywordArgumentNode):
+            return self.visit_keyword_argument(node)
+        elif isinstance(node, DictArgumentNode):
+            return self.visit_dict_argument(node)
+
+        raise DiagnosticError(node.location, f"Not implemented visitor for {type(node).__name__}")
+
+    @abc.abstractmethod
+    def visit_node(self, node: SyntaxNode) -> R:
+        raise NotImplementedError
+
+    def visit_tree(self, node: SyntaxTree) -> R:
+        return self.visit_node(node)
+
+    def visit_import(self, node: ImportNode) -> R:
+        return self.visit_node(node)
+
+    def visit_from_import(self, node: ImportFromNode) -> R:
+        return self.visit_node(node)
+
+    def visit_alias(self, node: AliasNode) -> R:
+        return self.visit_node(node)
+
+    def visit_type(self, node: TypeNode) -> R:
+        return self.visit_node(node)
+
+    def visit_statement(self, node: StatementNode) -> R:
+        return self.visit_node(node)
+
+    def visit_expression(self, node: ExpressionNode) -> R:
+        return self.visit_node(node)
+
+    def visit_decorator(self, node: DecoratorNode) -> R:
+        return self.visit_node(node)
+
+    def visit_parameter(self, node: ParameterNode) -> R:
+        return self.visit_node(node)
+
+    def visit_except_handler(self, node: ExceptHandlerNode) -> R:
+        return self.visit_node(node)
+
+    def visit_with_item(self, node: WithItemNode) -> R:
+        return self.visit_node(node)
+
+    def visit_comparator(self, node: ComparatorNode) -> R:
+        return self.visit_node(node)
+
+    def visit_argument(self, node: ArgumentNode) -> R:
+        return self.visit_node(node)
+
+    def visit_position_argument(self, node: PositionArgumentNode) -> R:
+        return self.visit_argument(node)
+
+    def visit_keyword_argument(self, node: KeywordArgumentNode) -> R:
+        return self.visit_argument(node)
+
+    def visit_dict_argument(self, node: DictArgumentNode) -> R:
+        return self.visit_node(node)
+
+
+def make_sequence(sequence: Iterable[object]) -> Sequence[SyntaxSymbol]:
     result = []
     for item in sequence:
         if item is None:

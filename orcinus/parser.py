@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import contextlib
-import io
 from collections import deque as Queue
 from typing import Set, MutableSequence, Tuple
 
@@ -1638,12 +1637,12 @@ class Parser:
         # subscribe_expression
         #     atom '[' slice_arguments ']'
         # """
-        self.consume(TokenID.LeftSquare)
+        token_open = self.consume(TokenID.LeftSquare)
         arguments = self.parse_subscribe_arguments()
-        self.consume(TokenID.RightSquare)
+        token_close = self.consume(TokenID.RightSquare)
 
         # noinspection PyArgumentList
-        return SubscribeExpressionNode(self.context, expression, arguments, expression.location)
+        return SubscribeExpressionNode(self.context, expression, token_open, arguments, token_close)
 
     def parse_attribute_expression(self, expression: ExpressionNode) -> ExpressionNode:
         # """
@@ -1758,4 +1757,3 @@ class Parser:
 
         token = lower_bound or upper_bound or stride or self.current_token
         return SliceArgumentNode(self.context, lower_bound, upper_bound, stride, token.location)
-

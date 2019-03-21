@@ -158,8 +158,8 @@ class SemanticModel:
                 self.diagnostics.error(node.location, 'Not implemented member')
 
     def emit_function(self, node: FunctionNode):
-        annotator = FunctionAnnotator(self, self.symbols, node)
-        annotator.annotate_statement(node.statement)
+        emitter = FunctionEmitter(self, self.symbols, node)
+        emitter.emit()
 
     def analyze(self):
         if self.is_analyzed:
@@ -1005,7 +1005,7 @@ class FlowAnnotator:
         self.builder.unreachable()
 
 
-class FunctionAnnotator(ExpressionAnnotator):
+class FunctionEmitter(ExpressionAnnotator):
     def __init__(self, model: SemanticModel, symbols: SemanticScope[SyntaxNode, Symbol], node: FunctionNode):
         super().__init__(model, SemanticScope(model, parent=symbols, constructor=lambda n: self.annotate(n)))
 
@@ -1040,301 +1040,20 @@ class FunctionAnnotator(ExpressionAnnotator):
 
         self.builder.ret(value, location=location)
 
-    def annotate_statement(self, node: StatementNode) -> bool:
-        if isinstance(node, BlockStatementNode):
-            return self.annotate_block_statement(node)
-        elif isinstance(node, PassStatementNode):
-            return self.annotate_pass_statement(node)
-        elif isinstance(node, ReturnStatementNode):
-            return self.annotate_return_statement(node)
-        # elif isinstance(node, ConditionStatementNode):
-        #     return self.annotate_condition_statement(node)
-        # elif isinstance(node, WhileStatementNode):
-        #     return self.annotate_while_statement(node)
-        elif isinstance(node, ExpressionStatementNode):
-            return self.annotate_expression_statement(node)
-        # elif isinstance(node, AssignStatementNode):
-        #     return self.annotate_assign_statement(node)
-        # elif isinstance(node, BreakStatementNode):
-        #     return self.annotate_break_statement(node)
-        # elif isinstance(node, ContinueStatementNode):
-        #     return self.annotate_continue_statement(node)
-        else:
-            self.diagnostics.error(node.location, 'Not implemented statement')
-            return False
+    def emit_statement(self, node: StatementNode):
+        emitter = FunctionStatementEmitter(self)
+        return emitter.emit_statement(node)
 
-    def annotate_block_statement(self, node: BlockStatementNode) -> bool:
-        for statement in node.statements:
-            if self.annotate_statement(statement):
-                return True
-        return False
+    def emit_expression(self, node: ExpressionNode) -> Value:
+        emitter = FunctionExpressionEmitter(self)
+        return emitter.emit_expression(node)
 
-    def annotate_pass_statement(self, _: PassStatementNode) -> bool:
-        return False
-
-    def annotate_return_statement(self, node: ReturnStatementNode) -> bool:
-        location = node.location
-
-        if node.value:
-            value = self.as_value(node.value)
-            location = node.value.location
-        else:
-            value = NoneConstant(self.symbol_context, location)
-
-        self.emit_return(value, location)
-        return True
-
-    # def emit_condition_statement(self, node: ConditionStatementNode) -> bool:
-    #     condition = self.emit_condition(node.scope, self.emit_expression(node.condition), node.condition.location)
-    #     begin_block = self.block
-    #
-    #     # then branch
-    #     then_block = self.builder.append_basic_block('if.then', node.then_statement.location)
-    #     self.builder.position_at(then_block)
-    #     then_terminated = self.emit_statement(node.then_statement)
-    #     then_finish = self.block
-    #
-    #     # else branch
-    #     if node.else_statement:
-    #         else_block = self.builder.append_basic_block('if.else', node.else_statement.location)
-    #         self.builder.position_at(else_block)
-    #         else_terminated = self.emit_statement(node.else_statement)
-    #         else_finish = self.block
-    #     else:
-    #         else_block = None
-    #         else_terminated = False
-    #         else_finish = None
-    #
-    #     # next branch
-    #     next_block = self.builder.append_basic_block('if.next', node.location)
-    #
-    #     # condition branch
-    #     self.builder.position_at(begin_block)
-    #     self.builder.cbranch(condition, then_block, else_block or next_block, location=node.location)
-    #
-    #     # terminate then branch
-    #     if not then_terminated:
-    #         self.builder.position_at(then_finish)
-    #         self.builder.branch(next_block, location=node.location)
-    #
-    #     # terminate else branch
-    #     if not else_terminated and else_finish:
-    #         self.builder.position_at(else_finish)
-    #         self.builder.branch(next_block, location=node.location)
-    #
-    #     # rest
-    #     self.builder.position_at(next_block)
-    #     return then_terminated and else_terminated
-    #
-    # def emit_while_statement(self, node: WhileStatementNode) -> bool:
-    #     cond_block = self.builder.append_basic_block('while.cond', location=node.location)
-    #     self.builder.branch(cond_block, location=node.location)
-    #     self.builder.position_at(cond_block)
-    #     condition = self.emit_condition(node.scope, self.emit_expression(node.condition), node.condition.location)
-    #     cond_end_block = self.builder.block
-    #
-    #     # next branch
-    #     next_block = self.builder.append_basic_block('while.next', node.location)
-    #
-    #     # then branch
-    #     then_block = self.builder.append_basic_block('while.then', node.location)
-    #     self.builder.position_at(then_block)
-    #     with self.emit_loop(next_block, cond_block) as loop_info:
-    #         self.emit_statement(node.then_statement)
-    #         loop_breaked = loop_info.is_breaked
-    #     then_finish = self.block
-    #
-    #     # else branch
-    #     if node.else_statement:
-    #         else_block = self.builder.append_basic_block('while.else', node.location)
-    #         self.builder.position_at(else_block)
-    #         else_terminated = self.emit_statement(node.else_statement)
-    #         if not else_terminated:
-    #             self.builder.branch(next_block, location=node.location)
-    #     else:
-    #         else_block = None
-    #         else_terminated = False
-    #
-    #     # condition branch
-    #     self.builder.position_at(cond_end_block)
-    #     self.builder.cbranch(condition, then_block, else_block or next_block, location=node.location)
-    #
-    #     # terminate then branch
-    #     if not then_finish.is_terminated:
-    #         self.builder.position_at(then_finish)
-    #         self.builder.branch(cond_block, location=node.location)
-    #
-    #     self.builder.position_at(next_block or else_block)
-    #     if else_terminated and not loop_breaked:
-    #         self.function.remove_basic_block(then_block)
-    #     else:
-    #         self.function.move_basic_block(len(self.function.blocks), then_block)
-    #     return else_terminated
-    #
-    def annotate_assign_statement(self, node: AssignStatementNode) -> bool:
-        source = self.as_value(node.source)
-
-        annotator = AssignAnnotator(self, source, node.location)
-        annotator.annotate_assign(node.target)
-
-        return False
-
-    # def emit_continue_statement(self, node: ContinueStatementNode) -> bool:
-    #     if not self.loop:
-    #         self.diagnostics.error(node.location, f'Not found loop for continue')
-    #     else:
-    #         self.builder.branch(self.loop.continue_block, location=node.location)
-    #     return True
-    #
-    # def emit_break_statement(self, node: BreakStatementNode) -> bool:
-    #     if not self.loop:
-    #         self.diagnostics.error(node.location, f'Not found loop for break')
-    #     else:
-    #         self.is_break = True
-    #         self.builder.branch(self.loop.break_block, location=node.location)
-    #     return True
-
-    def annotate_expression_statement(self, node: ExpressionStatementNode) -> bool:
-        self.symbols.get(node.value)
-        return False
-
-    # def emit_condition_expression(self, node: ConditionExpressionNode) -> Value:
-    #     condition = self.emit_condition(node.scope, self.emit_expression(node.condition), node.condition.location)
-    #     begin_block = self.builder.block
-    #
-    #     # then branch
-    #     then_block = self.builder.append_basic_block('if.then', node.location)
-    #     self.builder.position_at(then_block)
-    #     then_value = self.emit_expression(node.then_value)
-    #
-    #     # else branch
-    #     else_block = self.builder.append_basic_block('if.else', node.location)
-    #     self.builder.position_at(then_block)
-    #     else_value = self.emit_expression(node.else_value)
-    #
-    #     # condition branch
-    #     self.builder.position_at(begin_block)
-    #     result_type = self.find_union(then_value.type, else_value.type, location=node.location)
-    #     result = self.builder.alloca(result_type, location=node.location)
-    #     self.builder.cbranch(condition, then_block, else_block, location=node.location)
-    #
-    #     # next branch
-    #     next_block = self.builder.append_basic_block('if.next', node.location)
-    #     for block, value, location in [
-    #         (then_block, then_value, node.then_value.location),
-    #         (else_block, else_value, node.else_value.location)
-    #     ]:
-    #         self.builder.position_at(block)
-    #         self.builder.store(result, value, location=location)
-    #         self.builder.branch(next_block, location=location)
-    #
-    #     # rest
-    #     self.builder.position_at(next_block)
-    #     return self.builder.load(result, location=node.location)
-    #
-    # def emit_unary_expression(self, node: UnaryExpressionNode):
-    #     if node.operator == UnaryID.Not:
-    #         condition = self.emit_condition(node.scope, self.emit_expression(node.operand), node.operand.location)
-    #         cst_check = BooleanConstant(self.symbol_context, False, node.location)
-    #         return self.builder.is_(condition, cst_check, location=node.location)
-    #
-    #     name = '__{}__'.format(node.operator.name).lower()
-    #     arguments = [self.emit_expression(node.operand)]
-    #     return self.emit_named_call(node.scope, name, arguments, location=node.location)
-    #
-    # def emit_binary_expression(self, node: BinaryExpressionNode):
-    #     name = '__{}__'.format(node.operator.name).lower()
-    #     arguments = [self.emit_expression(node.left_operand), self.emit_expression(node.right_operand)]
-    #     return self.emit_named_call(node.scope, name, arguments, location=node.location)
-    #
-    # def emit_logic_expression(self, node: LogicExpressionNode) -> Value:
-    #     # emit first value
-    #     first_value = self.emit_expression(node.left_operand)
-    #     condition = self.emit_condition(node.scope, first_value, node.left_operand.location)
-    #     begin_block = self.builder.block
-    #
-    #     # then branch
-    #     first_block = self.builder.append_basic_block('cond.then', node.location)
-    #
-    #     # else branch
-    #     second_block = self.builder.append_basic_block('cond.else', node.location)
-    #     self.builder.position_at(second_block)
-    #     second_value = self.emit_expression(node.right_operand)
-    #     second_end = self.block
-    #
-    #     # condition branch
-    #     self.builder.position_at(begin_block)
-    #     result_type = self.find_union(first_value.type, second_value.type, location=node.location)
-    #     result = self.builder.alloca(result_type, location=node.location)
-    #
-    #     if node.operator == LogicID.And:
-    #         cst_check = BooleanConstant(self.symbol_context, False, node.location)
-    #     else:
-    #         cst_check = BooleanConstant(self.symbol_context, True, node.location)
-    #     check = self.builder.is_(condition, cst_check, location=node.location)
-    #     self.builder.cbranch(check, first_block, second_block, location=node.location)
-    #
-    #     # next branch
-    #     next_block = self.builder.append_basic_block('cond.next', node.location)
-    #     for block, value, location in [
-    #         (first_block, first_value, node.left_operand.location),
-    #         (second_end, second_value, node.right_operand.location)
-    #     ]:
-    #         self.builder.position_at(block)
-    #         self.builder.store(result, value, location=location)
-    #         self.builder.branch(next_block, location=location)
-    #
-    #     # rest
-    #     self.builder.position_at(next_block)
-    #     return self.builder.load(result, location=node.location)
-    #
-    # def emit_compare_expression(self, node: CompareExpressionNode) -> Value:
-    #     result = self.builder.alloca(self.symbol_context.boolean_type, location=node.location)
-    #     self.builder.store(result, BooleanConstant(self.symbol_context, False, node.location), location=node.location)
-    #
-    #     blocks = []
-    #
-    #     left_operand = self.emit_expression(node.left_operand)
-    #     for idx, comparator in enumerate(node.comparators):  # type: ComparatorNode
-    #         right_operand = self.emit_expression(comparator.right_operand)
-    #
-    #         next_block = self.builder.append_basic_block('cmp.{}.next'.format(idx), location=node.location)
-    #
-    #         name = '__{}__'.format(comparator.operator.name).lower()
-    #         cmp_result = self.emit_named_call(node.scope, name, [left_operand, right_operand], location=node.location)
-    #         blocks.append([cmp_result, self.builder.block, next_block])
-    #
-    #         self.builder.position_at(next_block)
-    #         left_operand = right_operand
-    #
-    #     # true block
-    #     self.builder.store(result, BooleanConstant(self.symbol_context, True, node.location), location=node.location)
-    #
-    #     false_block = self.builder.append_basic_block('cmp.end', location=node.location)
-    #     self.builder.branch(false_block, location=node.location)
-    #
-    #     for cmp_result, current_block, next_block in blocks:
-    #         self.builder.position_at(current_block)
-    #         self.builder.cbranch(cmp_result, next_block, false_block, location=cmp_result.location)
-    #
-    #     self.builder.position_at(false_block)
-    #     return self.builder.load(result, location=node.location)
-
-    def annotate_call_expression(self, node: CallExpressionNode):
-        arguments = [self.symbols[arg] for arg in node.arguments]
-        keywords = {name: self.symbols[arg] for name, arg in node.keywords.items()}
-
-        annotator = CallAnnotator(self, arguments, keywords, node.location)
-        return annotator.annotate_call(node.instance)
-
-    def annotate_subscribe_expression(self, node: SubscribeExpressionNode):
-        arguments = [self.symbols[arg] for arg in node.arguments]
-        instance = self.symbols[node.instance]
-        return instance.subscript(arguments, node.location)
+    def emit(self):
+        self.emit_statement(self.node.statement)
 
 
 class FunctionMixin(SemanticAnnotator):
-    def __init__(self, parent: FunctionAnnotator):
+    def __init__(self, parent: FunctionEmitter):
         super(FunctionMixin, self).__init__(parent.model, parent.symbols)
 
         self.parent = parent
@@ -1351,117 +1070,43 @@ class FunctionMixin(SemanticAnnotator):
     def builder(self) -> IRBuilder:
         return self.parent.builder
 
+    def emit_statement(self, node: StatementNode):
+        return self.parent.emit_statement(node)
 
-class CallAnnotator(FunctionMixin):
-    def __init__(self, parent: FunctionAnnotator, arguments: Arguments, keywords: Keywords, location: Location):
-        super(CallAnnotator, self).__init__(parent)
-
-        self.arguments = arguments
-        self.keywords = keywords
-        self.location = location
-
-    def get_arguments(self) -> str:
-        arguments = [str(arg) for arg in self.arguments]
-        arguments.extend(f'{name}: {arg}' for name, arg in self.keywords.items())
-        return ', '.join(arguments)
-
-    def resolve_named_call(self, scope: SyntaxScope, name: str) -> Optional[Tuple[Function, Sequence[Value]]]:
-        arguments = [arg.as_value(self.location) for arg in self.arguments]
-        keywords = {name: arg.as_value(self.location) for name, arg in self.keywords.values()}
-
-        resolver = FunctionResolver(self.model, arguments, keywords, location=self.location)
-        resolver.add_import_functions(name)
-        resolver.add_scope_functions(scope, name)
-        resolver.add_self_functions(name)
-        return resolver.find_function()
-
-    def emit_symbol_call(self, symbol: Symbol) -> Symbol:
-        candidate = symbol.find_call(self.arguments, self.keywords, self.location)
-        if candidate:
-            func, arguments = candidate
-            return self.builder.call(func, arguments, location=self.location)
-
-        arguments = self.get_arguments()
-        self.diagnostics.error(self.location, 'Not found function for call ‘{}({})’'.format(symbol, arguments))
-        return ErrorValue(self.module, self.location)
-
-    def emit_named_call(self, node: NamedExpressionNode) -> Symbol:
-        candidate = self.resolve_named_call(node.scope, node.name)
-        if candidate:
-            func, arguments = candidate
-            return self.builder.call(func, arguments, location=self.location)
-
-        arguments = self.get_arguments()
-        self.diagnostics.error(self.location, 'Not found function for call ‘{}({})’'.format(node.name, arguments))
-        return ErrorValue(self.module, node.location)
-
-    def annotate_call(self, node: ExpressionNode) -> Symbol:
-        if isinstance(node, NamedExpressionNode):
-            return self.annotate_named_expression(node)
-        elif isinstance(node, AttributeExpressionNode):
-            return self.annotate_attribute_expression(node)
-        return self.annotate_another_expression(node)
-
-    def annotate_named_expression(self, node: NamedExpressionNode) -> Symbol:
-        instance = self.search_named_symbol(node.scope, node.name, node.location)
-
-        # UFC:
-        #   - <function>(...)   -> call function
-        #   - <overload>(...)   -> call function
-        #   - <none>(...)       -> call function
-        if isinstance(instance, (Function, Overload, type(None))):
-            return self.emit_named_call(node)
-
-        # Otherwise:
-        #   - <type>(...)       -> call constructor
-        #   - <another>(...)    -> call value
-        return self.emit_symbol_call(instance)
-
-    def annotate_attribute_expression(self, node: AttributeExpressionNode) -> Symbol:
-        instance = self.symbols[node.instance]
-        attribute = instance.find_attribute(node.name, node.location)
-
-        # UFC:
-        #   - instance.<function>(...)   -> call function
-        #   - instance.<overload>(...)   -> call function
-        #   - instance.<none>(...)       -> call function
-        if isinstance(attribute, (Function, Overload, type(None))):
-            cast(list, self.arguments).insert(0, instance)
-            return self.emit_named_call(node)
-
-        # instance.name(...)
-        self.diagnostics.error(node.location, 'NOT IMPLEMENTED!')
-        return ErrorValue(self.module, node.location)
-
-    def annotate_another_expression(self, node: ExpressionNode) -> Symbol:
-        return self.emit_symbol_call(self.symbols[node])
+    def emit_expression(self, node: ExpressionNode) -> Value:
+        return self.parent.emit_expression(node)
 
 
-class AssignAnnotator(FunctionMixin):
-    def __init__(self, parent: FunctionAnnotator, source: Value, location: Location):
-        super(AssignAnnotator, self).__init__(parent)
+class FunctionStatementEmitter(FunctionMixin, StatementVisitor[None]):
+    def emit_statement(self, node: StatementNode):
+        return self.visit(node)
 
-        self.source = source
-        self.location = location
+    def visit_statement(self, node: StatementNode):
+        self.diagnostics.error(node.location, f"Not implemented emitting symbols for statement: {type(node).__name__}")
 
-    def annotate_assign(self, node: SyntaxNode):
-        if isinstance(node, NamedExpressionNode):
-            return self.annotate_named_expression(node)
-        elif isinstance(node, AttributeExpressionNode):
-            return self.annotate_attribute_expression(node)
+    def visit_block_statement(self, node: BlockStatementNode):
+        for statement in node.statements:
+            self.emit_statement(statement)
 
-        self.diagnostics.error(node.location, 'Not implemented statement')
+    def visit_pass_statement(self, node: PassStatementNode):
+        pass
 
-    def annotate_named_expression(self, node: NamedExpressionNode):
-        symbol = self.search_named_symbol(node.scope, node.name, node.location)
-        if symbol is None:
-            symbol = self.builder.alloca(self.source.type, location=node.location)
-            self.symbols[node] = self.as_symbol(symbol)
-            node.scope.declare(node.name, node)
+    def visit_return_statement(self, node: ReturnStatementNode) -> R:
+        location = node.location
 
-        target = self.as_value(node)
-        if isinstance(target, AllocaInstruction):
-            self.builder.store(target, self.source, location=node.location)
+        if node.value:
+            value = self.as_value(node.value)
+            location = node.value.location
         else:
-            self.diagnostics.error(node.location, 'Can not assign value')
-        return False
+            value = NoneConstant(self.symbol_context, location)
+
+        self.parent.emit_return(value, location)
+
+
+class FunctionExpressionEmitter(FunctionMixin, ExpressionVisitor[Value]):
+    def emit_expression(self, node: ExpressionNode):
+        return self.visit(node)
+
+    def visit_expression(self, node: ExpressionNode) -> Value:
+        self.diagnostics.error(node.location, f"Not implemented emitting symbols for statement: {type(node).__name__}")
+        return ErrorValue(self.module, node.location)
