@@ -187,8 +187,7 @@ class SemanticModel:
 
     def emit_function(self, node: FunctionNode):
         emitter = FunctionEmitter(self, self.symbols, node)
-        function = emitter.emit()
-        # print(function.as_blocks())
+        emitter.emit()
 
     def analyze(self):
         if self.is_analyzed:
@@ -1233,16 +1232,7 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         value = value or NoneConstant(self.symbol_context, node.location)
         self.parent.emit_return(value, value.location)
 
-        # TODO: Unreachable code
-
     def visit_condition_statement(self, node: ConditionStatementNode):
-        """
-        if <condition>:
-            <then_statement>
-        [ else ':'
-            <else_statement> ]
-        <next_statement>    # can be unreachable
-        """
         condition = self.emit_expression(node.condition)
         begin_scope = self.environment.scope
         begin_block = self.builder.block
@@ -1380,6 +1370,19 @@ class ExpressionEmitter(FunctionMixin, ExpressionAnnotator):
             return self.builder.load(symbol, location=node.location)
         return symbol
 
+    def visit_attribute_expression(self, node: AttributeExpressionNode) -> Symbol:
+        # Can assign to: fields
+        instance = self.emit_expression(node.instance)
+        if isinstance(instance, Value):
+            member = instance.type.get_member(node.name)
+            if isinstance(member, Field):
+                return self.
+            else:
+                self.diagnostics.error(node.location, 'Can not load value to expression')
+        else:
+            self.diagnostics.error(node.location, 'Can not load value to expression')
+        return ErrorValue(self.module, node.location)
+
     def visit_compare_expression(self, node: CompareExpressionNode) -> Symbol:
         left_argument = self.emit_expression(node.left_argument)
 
@@ -1410,7 +1413,7 @@ class ExpressionEmitter(FunctionMixin, ExpressionAnnotator):
                 return self.builder.call(function, arguments, location=comparator.location)
 
         # Unreachable
-        raise NotImplementedError
+        return BooleanConstant(self.symbol_context, False, node.location)
 
     def visit_unary_expression(self, node: UnaryExpressionNode) -> Symbol:
         argument = self.emit_expression(node.argument)
@@ -1425,7 +1428,7 @@ class ExpressionEmitter(FunctionMixin, ExpressionAnnotator):
         result = function.find_function()
         if not result:
             self.diagnostics.error(node.location, f"Not found method ‘{name}’")  # TODO: Normal message
-            return BooleanConstant(self.symbol_context, False, node.location)
+            return ErrorValue(self.module, node.location)
         else:
             function, arguments = result
             return self.builder.call(function, arguments, location=node.location)
@@ -1444,7 +1447,7 @@ class ExpressionEmitter(FunctionMixin, ExpressionAnnotator):
         result = function.find_function()
         if not result:
             self.diagnostics.error(node.location, f"Not found method ‘{name}’")  # TODO: Normal message
-            return BooleanConstant(self.symbol_context, False, node.location)
+            return ErrorValue(self.module, node.location)
         else:
             function, arguments = result
             return self.builder.call(function, arguments, location=node.location)
@@ -1458,8 +1461,8 @@ class ExpressionEmitter(FunctionMixin, ExpressionAnnotator):
 
     def visit_tuple_expression(self, node: TupleExpressionNode):
         if len(node.arguments) != 1:
-            self.diagnostics.error(self.location, f"Tuple value is not implemented")  # TODO: Normal message
-            return ErrorValue(self.module, self.location)
+            self.diagnostics.error(node.location, f"Tuple value is not implemented")  # TODO: Normal message
+            return ErrorValue(self.module, node.location)
         return self.emit_expression(node.arguments[0])
 
 
@@ -1471,14 +1474,26 @@ class AssignmentEmitter(FunctionMixin, ExpressionVisitor[None]):
         self.location = location
 
     def visit_expression(self, node: ExpressionNode):
-        self.diagnostics.error(node.location, 'Can not assign value to expression')
+        self.diagnostics.error(node.location, 'Can not store value')
 
     def visit_named_expression(self, node: NamedExpressionNode):
         symbol = self.search_named_symbol(node.name, node.location)
         if isinstance(symbol, AllocaInstruction):
             self.builder.store(symbol, self.source, location=self.location)
         else:
-            self.diagnostics.error(self.location, 'Can not assign value')
+            self.diagnostics.error(self.location, 'Can not store value')
+
+    def visit_attribute_expression(self, node: AttributeExpressionNode):
+        # Can assign to: fields
+        instance = self.emit_expression(node.instance)
+        if isinstance(instance, Value):
+            member = instance.type.get_member(node.name)
+            if isinstance(member, Field):
+                self.builder.insert_value(instance, member, self.source, location=self.location)
+            else:
+                self.diagnostics.error(node.location, 'Can not store value')
+        else:
+            self.diagnostics.error(node.location, 'Can not store value')
 
 
 class CallEmitter(FunctionMixin, ExpressionVisitor[Value]):
