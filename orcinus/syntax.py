@@ -1335,6 +1335,53 @@ class AugmentedAssignStatementNode(StatementNode):
         return make_sequence([self.target, self.token_operator, self.source, self.token_newline])
 
 
+class VariableStatementNode(StatementNode):
+    node_name: ExpressionNode
+    token_colon: SyntaxToken
+    type: TypeNode
+    token_equal: SyntaxToken
+    initial_value: ExpressionNode
+    token_newline: SyntaxToken
+
+    def __init__(self,
+                 context: SyntaxContext,
+                 node_name: ExpressionNode,
+                 token_colon: SyntaxToken,
+                 var_type: TypeNode,
+                 token_equal: SyntaxToken,
+                 initial_value: ExpressionNode,
+                 token_newline: SyntaxToken):
+        super().__init__(context)
+
+        self.node_name = node_name
+        self.token_colon = token_colon
+        self.type = var_type
+        self.token_equal = token_equal
+        self.initial_value = initial_value
+        self.token_newline = token_newline
+
+    @property
+    def name(self) -> str:
+        if isinstance(self.node_name, NamedExpressionNode):
+            return self.node_name.name
+        return ""
+
+    @property
+    def location(self) -> Location:
+        return self.node_name.location
+
+    @property
+    def children(self) -> Sequence[SyntaxSymbol]:
+        return make_sequence([
+            self.node_name,
+            self.token_colon,
+            self.type,
+            self.token_equal,
+            self.initial_value,
+            self.token_newline
+        ])
+
+
 class ConditionStatementNode(StatementNode):
     token_if: SyntaxToken
     condition: ExpressionNode
@@ -2362,6 +2409,9 @@ class AbstractStatementVisitor(Generic[R], abc.ABC):
     def visit_with_statement(self, node: WithStatementNode) -> R:
         return self.visit_statement(node)
 
+    def visit_variable_statement(self, node: VariableStatementNode) -> R:
+        return self.visit_statement(node)
+
 
 class StatementVisitor(AbstractStatementVisitor[R], abc.ABC):
     def visit(self, node: StatementNode) -> R:
@@ -2401,6 +2451,8 @@ class StatementVisitor(AbstractStatementVisitor[R], abc.ABC):
             return self.visit_block_statement(node)
         elif isinstance(node, ExpressionStatementNode):
             return self.visit_expression_statement(node)
+        elif isinstance(node, VariableStatementNode):
+            return self.visit_variable_statement(node)
 
         raise DiagnosticError(node.location, f"Not implemented visitor for {type(node).__name__}")
 
@@ -2542,6 +2594,8 @@ class NodeVisitor(Generic[R],
             return self.visit_block_statement(node)
         elif isinstance(node, ExpressionStatementNode):
             return self.visit_expression_statement(node)
+        elif isinstance(node, VariableStatementNode):
+            return self.visit_variable_statement(node)
         elif isinstance(node, IntegerExpressionNode):
             return self.visit_integer_expression(node)
         elif isinstance(node, StringExpressionNode):

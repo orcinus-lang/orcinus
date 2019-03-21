@@ -819,7 +819,7 @@ class Function(GenericSymbol, Value):
 
     @property
     def entry_block(self) -> Optional[BasicBlock]:
-        return self.__blocks[2] if self.__blocks else None
+        return self.__blocks[0] if self.__blocks else None
 
     @property
     def scope(self) -> NamedScope:
@@ -1063,7 +1063,7 @@ class BasicBlock:
         buffer.write('\n')
 
         for inst in self.instructions:
-            buffer.write("    {}\n".format(inst.as_inst()))
+            buffer.write("    {}    ; {}\n".format(inst.as_inst(), inst.location))
         return buffer.getvalue()
 
     @property
@@ -1072,12 +1072,12 @@ class BasicBlock:
 
 
 class Instruction(Value, abc.ABC):
-    def __init__(self, value_type: Type, location: Location):
+    def __init__(self, value_type: Type, *, name: str = None, location: Location):
         super().__init__(value_type, location)
 
         assert isinstance(value_type, Type)
 
-        self.__name = ''
+        self.__name = name or ''
         self.__block = None
 
     @property
@@ -1128,7 +1128,7 @@ class TerminatorInstruction(Instruction, abc.ABC):
 
 class ReturnInstruction(TerminatorInstruction):
     def __init__(self, value: Value, *, location: Location):
-        super(ReturnInstruction, self).__init__(value.context.void_type, location)
+        super(ReturnInstruction, self).__init__(value.context.void_type, location=location)
 
         assert isinstance(value, Value)
 
@@ -1144,7 +1144,7 @@ class BranchInstruction(TerminatorInstruction):
     def __init__(self, condition: Optional[Value], then_block: BasicBlock, else_block: Optional[BasicBlock], *,
                  location: Location):
         context = then_block.context
-        super(BranchInstruction, self).__init__(context.void_type, location)
+        super(BranchInstruction, self).__init__(context.void_type, location=location)
 
         assert isinstance(condition, (Value, type(None)))
         assert isinstance(then_block, BasicBlock)
@@ -1170,8 +1170,8 @@ class AllocaInstruction(Instruction):
 
 
 class LoadInstruction(Instruction):
-    def __init__(self, source: Value, location: Location):
-        super(LoadInstruction, self).__init__(source.type, location)
+    def __init__(self, source: Value, *, name: str = None, location: Location):
+        super().__init__(source.type, name=name, location=location)
 
         assert isinstance(source, AllocaInstruction)
 
@@ -1182,9 +1182,9 @@ class LoadInstruction(Instruction):
 
 
 class StoreInstruction(Instruction):
-    def __init__(self, target: Value, source: Value, location: Location):
+    def __init__(self, target: Value, source: Value, *, name: str = None, location: Location):
         context = target.context
-        super(StoreInstruction, self).__init__(context.void_type, location)
+        super().__init__(context.void_type, name=name, location=location)
 
         assert isinstance(source, Value)
         assert isinstance(target, AllocaInstruction)
@@ -1196,24 +1196,9 @@ class StoreInstruction(Instruction):
         return 'store {} {}'.format(self.source.as_val(), self.target.as_val())
 
 
-class IsInstruction(Instruction):
-    def __init__(self, arg1: Value, arg2: Value, location: Location):
-        context = arg1.context
-        super(IsInstruction, self).__init__(context.boolean_type, location)
-
-        assert isinstance(arg1, Value)
-        assert isinstance(arg2, Value)
-
-        self.arg1 = arg1
-        self.arg2 = arg2
-
-    def as_inst(self) -> str:
-        return '{} = is {} {}'.format(self.as_val(), self.arg1.as_val(), self.arg2.as_val())
-
-
 class CallInstruction(Instruction):
-    def __init__(self, func: Function, arguments: Sequence[Value], location: Location):
-        super(CallInstruction, self).__init__(func.return_type, location)
+    def __init__(self, func: Function, arguments: Sequence[Value], *, name: str=None, location: Location):
+        super(CallInstruction, self).__init__(func.return_type, name=name, location=location)
 
         assert isinstance(func, Function)
         assert all(isinstance(arg, Value) for arg in arguments)
@@ -1293,6 +1278,7 @@ class IRBuilder:
 
     @contextlib.contextmanager
     def goto_block(self, block: BasicBlock):
+        # TODO: Position before terminated instruction.
         old_block = self.block
         self.position_at(block)
         yield block
@@ -1320,14 +1306,14 @@ class IRBuilder:
         self.block.append(inst)
         return inst
 
-    def alloca(self, value_type: Type, *, location: Location) -> Instruction:
-        return self.__append(AllocaInstruction(value_type, location))
+    def alloca(self, value_type: Type, *, name: str = None, location: Location) -> Instruction:
+        return self.__append(AllocaInstruction(value_type, name=name, location=location))
 
-    def load(self, value: Value, *, location: Location) -> Instruction:
-        return self.__append(LoadInstruction(value, location))
+    def load(self, value: Value, *, name: str = None, location: Location) -> Instruction:
+        return self.__append(LoadInstruction(value, name=name, location=location))
 
     def store(self, target: Value, source: Value, *, location: Location) -> Instruction:
-        return self.__append(StoreInstruction(target, source, location))
+        return self.__append(StoreInstruction(target, source, location=location))
 
     def ret(self, value: Value, *, location: Location) -> Instruction:
         return self.__append(ReturnInstruction(value, location=location))
@@ -1339,20 +1325,17 @@ class IRBuilder:
     def branch(self, then_block: BasicBlock, *, location: Location) -> Instruction:
         return self.__append(BranchInstruction(None, then_block, None, location=location))
 
-    def is_(self, arg1: Value, arg2: Value, *, location: Location) -> Instruction:
-        return self.__append(IsInstruction(arg1, arg2, location))
+    def call(self, func: Function, arguments: Sequence[Value], *, name: str = None, location: Location) -> Instruction:
+        return self.__append(CallInstruction(func, arguments, name=name, location=location))
 
-    def call(self, func: Function, arguments: Sequence[Value], *, location: Location) -> Instruction:
-        return self.__append(CallInstruction(func, arguments, location=location))
-
-    def new(self, func: Function, arguments: Sequence[Value], *, location: Location) -> Instruction:
+    def new(self, func: Function, arguments: Sequence[Value], *, name: str = None, location: Location) -> Instruction:
         return self.__append(NewInstruction(func, arguments, location=location))
 
     def insert_value(self, instance: Value, field: Field, source: Value, *, location):
         return self.__append(InsertValueInstruction(instance, field, source, location=location))
 
-    def extract_value(self, instance, field, location):
-        return self.__append(ExtractValueInstruction(instance, field, location=location))
+    def extract_value(self, instance, field, *, name: str = None, location: Location):
+        return self.__append(ExtractValueInstruction(instance, field, name=name, location=location))
 
 
 class InheritanceBuilder:

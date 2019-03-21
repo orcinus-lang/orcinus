@@ -22,6 +22,33 @@ Arguments = Sequence['SemanticSymbol']
 Keywords = Mapping[str, 'SemanticSymbol']
 SymbolConstructor = Callable[[SyntaxNode], 'SemanticSymbol']
 
+UNARY_NAMES = {
+    UnaryID.Pos: '__pos__',
+    UnaryID.Neg: '__neg__',
+    UnaryID.Inv: '__inv__',
+    # UnaryID.Not is logical and is not implemented as call
+}
+BINARY_NAMES = {
+    BinaryID.Add: '__add__',
+    BinaryID.Sub: '__sub__',
+    BinaryID.Mul: '__mul__',
+    BinaryID.Mod: '__mod__',
+    BinaryID.Pow: '__pow__',
+    BinaryID.And: '__and__',
+    BinaryID.Or: '__or__',
+    BinaryID.Xor: '__xor__',
+    BinaryID.LeftShift: '__lshift__',
+    BinaryID.RightShift: '__rshift__',
+}
+COMPARE_NAMES = {
+    CompareID.Equal: '__eq__',
+    CompareID.NotEqual: '__ne__',
+    CompareID.Less: '__lt__',
+    CompareID.LessEqual: '__le__',
+    CompareID.Great: '__gt__',
+    CompareID.GreatEqual: '__ge__',
+}
+
 
 class SemanticModuleLoader(ModuleLoader):
     def __init__(self, context: SemanticContext):
@@ -161,7 +188,7 @@ class SemanticModel:
     def emit_function(self, node: FunctionNode):
         emitter = FunctionEmitter(self, self.symbols, node)
         function = emitter.emit()
-        function = function
+        # print(function.as_blocks())
 
     def analyze(self):
         if self.is_analyzed:
@@ -295,7 +322,7 @@ class LocalEnvironment(SemanticEnvironment):
 
     def merge(self, scopes: Set[SemanticScope]) -> SemanticScope:
         """ Merge current scope with another scopes and replace """
-        self.scope = SemanticScope(self.scope.parent)
+        self.scope = SemanticScope(self.scope)
 
         # Find intersection between received scopes and add to new scope
 
@@ -323,7 +350,11 @@ class SemanticScope:
         self.__declared[name] = symbol
 
     def resolve(self, name: str) -> Optional[Symbol]:
-        return self.__declared.get(name)
+        symbol = self.__declared.get(name)
+        if symbol:
+            return symbol
+        elif self.parent:
+            return self.parent.resolve(name)
 
 
 class SemanticMixin(abc.ABC):
@@ -435,9 +466,9 @@ class SemanticAnnotator(SemanticMixin, abc.ABC):
         return self.__symbols if self.__symbols is not None else self.model.symbols
 
     def annotate(self, node: SyntaxNode) -> Optional[Symbol]:
-        return None
+        return self.model.symbols[node]
 
-    def search_named_symbol(self, environ: SemanticEnvironment, name: str, location: Location) -> Optional[Symbol]:
+    def search_named_symbol(self, name: str, location: Location) -> Optional[Symbol]:
         if name == TYPE_VOID_NAME:
             return self.symbol_context.void_type
         elif name == TYPE_BOOLEAN_NAME:
@@ -471,7 +502,7 @@ class ExpressionAnnotator(SemanticAnnotator, ExpressionVisitor[Value], abc.ABC):
         return StringConstant(self.symbol_context, node.value, location=node.location)
 
     def visit_named_expression(self, node: NamedExpressionNode) -> Symbol:
-        symbol = self.search_named_symbol(self.environment, node.name, node.location)
+        symbol = self.search_named_symbol(node.name, node.location)
         if not symbol:
             self.diagnostics.error(node.location, f'Name ‘{node.name}’ not found in current scope')
             return ErrorValue(self.module, node.location)
@@ -554,7 +585,7 @@ class StaticAnnotator(SemanticAnnotator):
         return GenericType(self.model.module, node.name, node.location)
 
     def annotate_named_type(self, node: NamedTypeNode) -> Symbol:
-        symbol = self.search_named_symbol(self.environment, node.name, node.location)
+        symbol = self.search_named_symbol(node.name, node.location)
         if not symbol:
             self.diagnostics.error(node.location, f'Type ‘{node.name}’ not found in current scope')
             return ErrorType(self.module, node.location)
@@ -571,17 +602,17 @@ class StaticAnnotator(SemanticAnnotator):
             return self.symbols[node]
 
         if isinstance(parent, Module):
-            return ModuleMemberAnnotator(self.model, parent).visit(node)
+            return ModuleMemberAnnotator(self.model, parent).annotate(node)
         elif isinstance(parent, ClassType):
-            return ClassMemberAnnotator(self.model, parent).visit(node)
+            return ClassMemberAnnotator(self.model, parent).annotate(node)
         elif isinstance(parent, StructType):
-            return StructMemberAnnotator(self.model, parent).visit(node)
+            return StructMemberAnnotator(self.model, parent).annotate(node)
         elif isinstance(parent, InterfaceType):
-            return InterfaceMemberAnnotator(self.model, parent).visit(node)
+            return InterfaceMemberAnnotator(self.model, parent).annotate(node)
         elif isinstance(parent, EnumType):
-            return EnumMemberAnnotator(self.model, parent).visit(node)
+            return EnumMemberAnnotator(self.model, parent).annotate(node)
         elif isinstance(parent, Type):
-            return TypeMemberAnnotator(self.model, parent).visit(node)
+            return TypeMemberAnnotator(self.model, parent).annotate(node)
 
         self.diagnostics.error(parent.location, 'Not implemented parent')
         return None
@@ -600,6 +631,9 @@ class ParentMemberAnnotator(SemanticAnnotator, MemberVisitor[Optional[Symbol]]):
     @property
     def parent(self) -> Container:
         return self.__parent
+
+    def annotate(self, node: MemberNode) -> Optional[Symbol]:
+        return self.visit(node)
 
     def visit_member(self, node: MemberNode):
         self.diagnostics.error(node.location, f"Not implemented emitting symbols for statement: {type(node).__name__}")
@@ -654,6 +688,12 @@ class ModuleMemberAnnotator(ParentMemberAnnotator):
     @property
     def parent(self) -> Module:
         return cast(Module, super().parent)
+
+    def annotate(self, node: MemberNode) -> Optional[Symbol]:
+        symbol = super().annotate(node)
+        if isinstance(symbol, Named):
+            self.environment.define(symbol.name, symbol)
+        return symbol
 
     def visit_class(self, node: ClassNode) -> Type:
         if self.module == self.symbol_context.builtins_module:
@@ -761,7 +801,10 @@ class EnumMemberAnnotator(TypeMemberAnnotator):
 
 
 class FunctionResolver(SemanticMixin):
-    def __init__(self, model: SemanticModel, arguments: Sequence[Value] = None, keywords: Mapping[str, Value] = None,
+    def __init__(self,
+                 model: SemanticModel,
+                 arguments: Sequence[Value] = None,
+                 keywords: Mapping[str, Value] = None,
                  *, location: Location):
         super(FunctionResolver, self).__init__(model)
 
@@ -1306,7 +1349,116 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         # mark as continue
         self.builder.position_at(next_block)
 
+    def visit_variable_statement(self, node: VariableStatementNode):
+        var_type = self.as_type(node.type)
+        with self.builder.goto_block(self.function.entry_block):
+            variable = self.builder.alloca(var_type, name=node.name, location=node.location)
+
+        if node.initial_value:
+            initial_value = self.emit_expression(node.initial_value)
+            self.builder.store(variable, initial_value, location=node.initial_value.location)
+
+        self.environment.define(node.name, variable)
+
+    def visit_assign_statement(self, node: AssignStatementNode):
+        source = self.emit_expression(node.source)
+        emitter = AssignmentEmitter(self.parent, source, node.location)
+        emitter.visit(node.target)
+
 
 class ExpressionEmitter(FunctionMixin, ExpressionAnnotator):
     def emit_expression(self, node: ExpressionNode):
         return self.visit(node)
+
+    def visit_named_expression(self, node: NamedExpressionNode) -> Symbol:
+        symbol = super().visit_named_expression(node)
+        if isinstance(symbol, AllocaInstruction):
+            return self.builder.load(symbol, location=node.location)
+        return symbol
+
+    def visit_compare_expression(self, node: CompareExpressionNode) -> Symbol:
+        left_argument = self.emit_expression(node.left_argument)
+
+        if len(node.comparators) > 1:
+            self.diagnostics.error(node.location, "Multiple comparators is not implemented")
+            return BooleanConstant(self.symbol_context, False, node.location)
+        elif not node.comparators:
+            self.diagnostics.error(node.location, "Compare expression must contains at least one on comparator")
+            return BooleanConstant(self.symbol_context, False, node.location)
+
+        for comparator in node.comparators:
+            right_argument = self.emit_expression(comparator.right_argument)
+
+            # TODO: Special cases: `in` and `is`
+            name = COMPARE_NAMES.get(comparator.opcode)
+            if not name:
+                self.diagnostics.error(comparator.location, "Not implemented comparison operator")
+                return BooleanConstant(self.symbol_context, False, comparator.location)
+
+            function = FunctionResolver(self.model, [left_argument, right_argument], location=comparator.location)
+            function.add_self_functions(name)
+            result = function.find_function()
+            if not result:
+                self.diagnostics.error(comparator.location, f"Not found method ‘{name}’")  # TODO: Normal message
+                return BooleanConstant(self.symbol_context, False, node.location)
+            else:
+                function, arguments = result
+                return self.builder.call(function, arguments, location=comparator.location)
+
+        # Unreachable
+        raise NotImplementedError
+
+    def visit_unary_expression(self, node: UnaryExpressionNode) -> Symbol:
+        argument = self.emit_expression(node.argument)
+
+        name = UNARY_NAMES.get(node.opcode)
+        if not name:
+            self.diagnostics.error(node.location, "Not implemented binary operator")
+            return ErrorValue(self.module, node.location)
+
+        function = FunctionResolver(self.model, [argument], location=node.location)
+        function.add_self_functions(name)
+        result = function.find_function()
+        if not result:
+            self.diagnostics.error(node.location, f"Not found method ‘{name}’")  # TODO: Normal message
+            return BooleanConstant(self.symbol_context, False, node.location)
+        else:
+            function, arguments = result
+            return self.builder.call(function, arguments, location=node.location)
+
+    def visit_binary_expression(self, node: BinaryExpressionNode) -> Symbol:
+        left_argument = self.emit_expression(node.left_argument)
+        right_argument = self.emit_expression(node.right_argument)
+
+        name = BINARY_NAMES.get(node.opcode)
+        if not name:
+            self.diagnostics.error(node.location, "Not implemented binary operator")
+            return ErrorValue(self.module, node.location)
+
+        function = FunctionResolver(self.model, [left_argument, right_argument], location=node.location)
+        function.add_self_functions(name)
+        result = function.find_function()
+        if not result:
+            self.diagnostics.error(node.location, f"Not found method ‘{name}’")  # TODO: Normal message
+            return BooleanConstant(self.symbol_context, False, node.location)
+        else:
+            function, arguments = result
+            return self.builder.call(function, arguments, location=node.location)
+
+
+class AssignmentEmitter(FunctionMixin, ExpressionVisitor[None]):
+    def __init__(self, parent: FunctionEmitter, source: Value, location: Location):
+        super().__init__(parent)
+
+        self.source = source
+        self.location = location
+
+    def visit_expression(self, node: ExpressionNode):
+        self.diagnostics.error(node.location, 'Can not assign value to expression')
+
+    def visit_named_expression(self, node: NamedExpressionNode):
+        symbol = self.search_named_symbol(node.name, node.location)
+        if isinstance(symbol, AllocaInstruction):
+            self.builder.store(symbol, self.source, location=self.location)
+        else:
+            self.diagnostics.error(self.location, 'Can not assign value')

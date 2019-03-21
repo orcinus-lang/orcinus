@@ -108,6 +108,10 @@ class FunctionEmitter:
     def llvm_types(self):
         return self.parent.llvm_types
 
+    @property
+    def llvm_functions(self):
+        return self.parent.llvm_functions
+
     def emit(self):
         # generate blocks
         for block in self.function.blocks:
@@ -127,6 +131,11 @@ class FunctionEmitter:
             return ir.Constant(self.llvm_types[value.type], value.value)
         elif isinstance(value, NoneConstant):
             return ir.Constant.literal_struct([])
+        elif isinstance(value, Instruction):
+            llvm_inst = self.llvm_instructions.get(value)
+            if not llvm_inst:
+                raise DiagnosticError(value.location, f'Instructions order are broken: {type(value).__name__}')
+            return llvm_inst
 
         raise DiagnosticError(value.location, f'Conversion to LLVM is not implemented: {type(value).__name__}')
 
@@ -134,7 +143,15 @@ class FunctionEmitter:
         if isinstance(inst, ReturnInstruction):
             result = self.emit_return_instruction(inst)
         elif isinstance(inst, BranchInstruction):
-                result = self.emit_branch_instruction(inst)
+            result = self.emit_branch_instruction(inst)
+        elif isinstance(inst, AllocaInstruction):
+            result = self.emit_alloca_instruction(inst)
+        elif isinstance(inst, StoreInstruction):
+            result = self.emit_store_instruction(inst)
+        elif isinstance(inst, LoadInstruction):
+            result = self.emit_load_instruction(inst)
+        elif isinstance(inst, CallInstruction):
+            result = self.emit_call_instruction(inst)
         else:
             raise DiagnosticError(inst.location, f'Conversion to LLVM is not implemented: {type(inst).__name__}')
 
@@ -154,6 +171,46 @@ class FunctionEmitter:
         else:
             llvm_target = self.llvm_blocks[inst.then_block]
             return self.llvm_builder.branch(llvm_target)
+
+    def emit_alloca_instruction(self, inst: AllocaInstruction) -> ir.Value:
+        llvm_type = self.llvm_types[inst.type]
+        return self.llvm_builder.alloca(llvm_type, name=inst.name)
+
+    def emit_load_instruction(self, inst: LoadInstruction) -> ir.Value:
+        llvm_source = self.get_value(inst.source)
+        return self.llvm_builder.load(llvm_source, name=inst.name)
+
+    def emit_store_instruction(self, inst: StoreInstruction) -> ir.Value:
+        llvm_source = self.get_value(inst.source)
+        llvm_target = self.get_value(inst.target)
+        return self.llvm_builder.store(llvm_source, llvm_target)
+
+    def emit_call_instruction(self, inst: CallInstruction) -> ir.Value:
+        llvm_arguments = [self.get_value(arg) for arg in inst.arguments]
+        # TODO: Builtins calls
+        if inst.function.name == '__neg__':
+            return self.llvm_builder.neg(llvm_arguments[0], name=inst.name)
+        if inst.function.name == '__pos__':
+            return llvm_arguments[0]
+        elif inst.function.name == '__add__':
+            return self.llvm_builder.add(llvm_arguments[0], llvm_arguments[1], name=inst.name)
+        elif inst.function.name == '__eq__':
+            return self.llvm_builder.icmp_signed('==', llvm_arguments[0], llvm_arguments[1], name=inst.name)
+        elif inst.function.name == '__ne__':
+            return self.llvm_builder.icmp_signed('!=', llvm_arguments[0], llvm_arguments[1], name=inst.name)
+        elif inst.function.name == '__lt__':
+            return self.llvm_builder.icmp_signed('<', llvm_arguments[0], llvm_arguments[1], name=inst.name)
+        elif inst.function.name == '__le__':
+            return self.llvm_builder.icmp_signed('<=', llvm_arguments[0], llvm_arguments[1], name=inst.name)
+        elif inst.function.name == '__gt__':
+            return self.llvm_builder.icmp_signed('>', llvm_arguments[0], llvm_arguments[1], name=inst.name)
+        elif inst.function.name == '__ge__':
+            return self.llvm_builder.icmp_signed('>=', llvm_arguments[0], llvm_arguments[1], name=inst.name)
+
+        # TODO: Invoke calls
+
+        llvm_function = self.llvm_functions[inst.function]
+        return self.llvm_builder.call(llvm_function, llvm_arguments, name=inst.name)
 
 
 def initialize_codegen():

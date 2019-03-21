@@ -1095,6 +1095,8 @@ class Parser:
 
         if self.match(TokenID.Equal):
             return self.parse_assign_statement(expression)
+        elif self.match(TokenID.Colon):
+            return self.parse_variable_statement(expression)
         elif self.match_any(AUGMENTED_STATEMENT_STARTS):
             return self.parse_augmented_assign_statement(expression)
         token_newline = self.consume(TokenID.NewLine)
@@ -1131,6 +1133,39 @@ class Parser:
 
         # noinspection PyArgumentList
         return AugmentedAssignStatementNode(self.context, target, token_operator, opcode, source, token_newline)
+
+    def parse_variable_statement(self, named: ExpressionNode):
+        # """
+        # assign_expression
+        #     targets_list '=' expression
+        #
+        # TODO: https://docs.python.org/3/reference/simple_stmts.html#grammar-token-assignment-stmt
+        # """
+        if not isinstance(named, NamedExpressionNode):
+            self.diagnostics.error(named.location, "Required ‘{}’, but got ‘{}’".format('name', 'expression'))
+
+        token_colon = self.consume(TokenID.Colon)
+        var_type = self.parse_type()
+
+        if self.match(TokenID.Equal):
+            token_equal = self.consume(TokenID.Equal)
+            initial_value = self.parse_expression_list()
+        else:
+            token_equal = None
+            initial_value = None
+
+        token_newline = self.consume(TokenID.NewLine)
+
+        # noinspection PyArgumentList
+        return VariableStatementNode(
+            self.context,
+            named,
+            token_colon,
+            var_type,
+            token_equal,
+            initial_value,
+            token_newline
+        )
 
     def parse_arguments(self, arguments: Sequence[ExpressionNode] = None) -> SyntaxCollection[ExpressionNode]:
         # """
