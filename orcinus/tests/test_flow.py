@@ -8,18 +8,19 @@ from orcinus.semantic import *
 from orcinus.tests.utils.parser import parse_member, check_diagnostics
 
 
-def annotate_control_flow(content: str):
+def annotate_control_flow(content: str, has_errors=False):
     context, node = parse_member(content)
     assert isinstance(node, FunctionNode)
 
     annotator = FlowAnnotator(context.diagnostics)
     flow = annotator.annotate(node)
-    check_diagnostics(context.diagnostics)
-    return flow
+    if not has_errors:
+        check_diagnostics(context.diagnostics)
+    return context, node, flow
 
 
 def test_condition_simple_flow():
-    flow = annotate_control_flow("""
+    _, _, flow = annotate_control_flow("""
 def main():
     if cond:
         pass
@@ -38,7 +39,7 @@ def main():
 
 
 def test_condition_simple_flow_with_return():
-    flow = annotate_control_flow("""
+    _, _, flow = annotate_control_flow("""
 def main():
     if cond:
         return
@@ -62,7 +63,7 @@ def main():
 
 
 def test_condition_else_flow():
-    flow = annotate_control_flow("""
+    _, _, flow = annotate_control_flow("""
 def main():
     if cond:
         pass
@@ -85,7 +86,7 @@ def main():
 
 
 def test_condition_else_flow_with_return():
-    flow = annotate_control_flow("""
+    _, _, flow = annotate_control_flow("""
 def main():
     if cond:
         return
@@ -106,7 +107,7 @@ def main():
 
 
 def test_condition_else_flow_with_partial_return():
-    flow = annotate_control_flow("""
+    _, _, flow = annotate_control_flow("""
 def main():
     if cond:
         return
@@ -129,7 +130,7 @@ def main():
 
 
 def test_condition_else_flow_with_unreachable():
-    flow = annotate_control_flow("""
+    _, _, flow = annotate_control_flow("""
 def main():
     if cond:
         return
@@ -154,7 +155,7 @@ def main():
 
 
 def test_while_flow():
-    flow = annotate_control_flow("""
+    _, _, flow = annotate_control_flow("""
 def main():
     while True:
         pass
@@ -177,7 +178,7 @@ def main():
 
 
 def test_while_flow_with_return():
-    flow = annotate_control_flow("""
+    _, _, flow = annotate_control_flow("""
 def main():
     while True:
         return
@@ -200,7 +201,7 @@ def main():
 
 
 def test_while_else_flow():
-    flow = annotate_control_flow("""
+    _, _, flow = annotate_control_flow("""
 def main():
     while True:
         pass
@@ -227,7 +228,7 @@ def main():
 
 
 def test_while_else_flow_with_return():
-    flow = annotate_control_flow("""
+    _, _, flow = annotate_control_flow("""
 def main():
     while True:
         return
@@ -252,7 +253,7 @@ def main():
 
 
 def test_while_else_flow_with_partial_return():
-    flow = annotate_control_flow("""
+    _, _, flow = annotate_control_flow("""
 def main():
     while True:
         pass
@@ -275,8 +276,9 @@ def main():
     assert block_then.successors == {block_cond}
     assert block_else.successors == {block_exit}
 
+
 def test_while_else_flow_with_break():
-    flow = annotate_control_flow("""
+    _, _, flow = annotate_control_flow("""
 def main():
     while True:
         break
@@ -294,5 +296,59 @@ def main():
     assert block_enter.successors == {block_loop}
     assert block_loop.successors == {block_cond}
     assert block_cond.successors == {block_then, block_else}
+    assert block_then.successors == {block_else}
+    assert block_else.successors == {block_exit}
+
+
+def test_while_else_flow_with_continue():
+    _, _, flow = annotate_control_flow("""
+def main():
+    while True:
+        continue
+    """)
+
+    assert len(flow.blocks) == 5
+
+    block_enter = flow.blocks[0]
+    block_loop = flow.blocks[1]
+    block_cond = flow.blocks[2]
+    block_then = flow.blocks[3]
+    block_else = flow.blocks[4]
+    block_exit = flow.exit_block
+
+    assert block_enter.successors == {block_loop}
+    assert block_loop.successors == {block_cond}
+    assert block_cond.successors == {block_then, block_else}
     assert block_then.successors == {block_cond}
     assert block_else.successors == {block_exit}
+
+
+def test_continue_without_loop():
+    context, _, flow = annotate_control_flow("""
+def main():
+    continue
+    """, has_errors=True)
+
+    assert len(flow.blocks) == 1
+
+    block_enter = flow.blocks[0]
+    block_exit = flow.exit_block
+
+    # assert block_enter.successors == {block_exit} # TODO: successors is empty set
+
+
+def test_break_without_loop():
+    context, _, flow = annotate_control_flow("""
+def main():
+    break
+    """, has_errors=True)
+
+    assert len(flow.blocks) == 1
+
+    block_enter = flow.blocks[0]
+    block_exit = flow.exit_block
+
+    # assert block_enter.successors == {block_exit} # TODO: successors is empty set
+
+    assert len(context.diagnostics) == 1
+    assert 'break' in context.diagnostics[0].message

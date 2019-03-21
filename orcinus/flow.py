@@ -139,6 +139,8 @@ class FlowBuilder:
     def __init__(self, graph: FlowGraph):
         self.__graph = graph
         self.__block = graph.enter_block
+        self.__continue_block = None
+        self.__break_block = None
 
     @property
     def graph(self) -> FlowGraph:
@@ -166,6 +168,16 @@ class FlowBuilder:
             self.__block = self.unreached_block
         return self.block
 
+    @property
+    def continue_block(self) -> Optional[FlowBlock]:
+        return self.__continue_block
+
+    @property
+    def break_block(self) -> Optional[FlowBlock]:
+        if  not self.__break_block and self.__continue_block:
+            self.__break_block = self.append_block('break')
+        return self.__break_block
+
     def append_block(self, name: str):
         return self.graph.append_block(name)
 
@@ -179,18 +191,43 @@ class FlowBuilder:
         self.__block = None
 
     @contextlib.contextmanager
-    def block_helper(self, name: str):
-        helper = FlowHelper(self.append_block(name))
+    def block_helper(self, name: str) -> BlockHelper:
+        helper = BlockHelper(self.append_block(name))
         self.append_link(helper.enter_block)
 
         self.block = helper.enter_block
         yield helper
         helper.exit_block = self.block
 
+    @contextlib.contextmanager
+    def loop_helper(self, continue_block: FlowBlock) -> LoopHelper:
+        old_continue = self.__continue_block
+        old_break = self.__break_block
 
-class FlowHelper:
+        self.__continue_block = continue_block
+        self.__break_block = None
+
+        helper = LoopHelper(continue_block)
+        yield helper
+
+        helper.break_block = self.__break_block
+
+        self.__continue_block = old_continue
+        self.__break_block = old_break
+
+
+class BlockHelper:
     enter_block: FlowBlock
     exit_block: Optional[FlowBlock]
 
-    def __init__(self, enter_block):
+    def __init__(self, enter_block: FlowBlock):
         self.exit_block = self.enter_block = enter_block
+
+
+class LoopHelper:
+    continue_block: FlowBlock
+    break_block: Optional[FlowBlock]
+
+    def __init__(self, continue_block: FlowBlock):
+        self.continue_block = continue_block
+        self.break_block = None

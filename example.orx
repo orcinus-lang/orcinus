@@ -1,4 +1,4 @@
 def main(a: int) -> int:
-    while True:
-        pass
-    pass
+    if True:
+        return 1
+    return 0

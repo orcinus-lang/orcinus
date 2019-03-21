@@ -179,7 +179,7 @@ class SemanticModel:
         )
         for func in functions:
             if not func.is_abstract:
-                annotator = FlowAnnotator(self)
+                annotator = FlowAnnotator(self.diagnostics)
                 annotator.annotate(func)
                 self.emit_function(func)
 
@@ -855,6 +855,10 @@ class FlowAnnotator:
             return self.annotate_expression_statement(node)
         elif isinstance(node, PassStatementNode):
             return self.annotate_pass_statement(node)
+        elif isinstance(node, ContinueStatementNode):
+            return self.annotate_continue_statement(node)
+        elif isinstance(node, BreakStatementNode):
+            return self.annotate_break_statement(node)
 
         self.diagnostics.error(node.location, 'Not implemented control flow annotation for statement')
 
@@ -879,7 +883,7 @@ class FlowAnnotator:
 
         # loop then block
         with self.builder.block_helper('while.then') as then_helper:
-            with self.with_loop(cond_block, break_block):
+            with self.builder.loop_helper(cond_block) as loop_helper:
                 self.annotate_statement(node.then_statement)
 
         if then_helper.exit_block:
@@ -900,7 +904,9 @@ class FlowAnnotator:
         # loop next block
         terminated_blocks = [block for block in terminated_blocks if block]
         if terminated_blocks:
-            next_block = self.builder.append_block('while.next')
+            if loop_helper.break_block:
+                loop_helper.break_block.name = 'while.next'
+            next_block = loop_helper.break_block or self.builder.append_block('while.next')
             for block in terminated_blocks:
                 block.append_link(next_block)
             self.builder.block = next_block
@@ -981,6 +987,22 @@ class FlowAnnotator:
 
     def annotate_named_expression(self, node: NamedExpressionNode):
         self.builder.append_instruction(node)
+
+    def annotate_continue_statement(self, node: ContinueStatementNode):
+        if self.builder.continue_block:
+            self.builder.append_link(self.builder.continue_block)
+        else:
+            self.diagnostics.error(node.location, "‘continue’ is outside of loop")
+
+        self.builder.unreachable()
+
+    def annotate_break_statement(self, node: BreakStatementNode):
+        if self.builder.break_block:
+            self.builder.append_link(self.builder.break_block)
+        else:
+            self.diagnostics.error(node.location, "‘break’ is outside of loop")
+
+        self.builder.unreachable()
 
 
 class FunctionAnnotator(ExpressionAnnotator):

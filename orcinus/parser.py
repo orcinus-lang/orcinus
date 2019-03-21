@@ -890,7 +890,7 @@ class Parser:
         # continue_statement
         #     'continue'
         # """
-        token_continue = self.consume(TokenID.Break)
+        token_continue = self.consume(TokenID.Continue)
         token_newline = self.consume(TokenID.NewLine)
 
         # noinspection PyArgumentList
