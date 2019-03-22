@@ -8,3 +8,5 @@ __pycache__/
 .venv/
 *.egg-info/
 .hypothesis/
+.coverage
+htmlcov/

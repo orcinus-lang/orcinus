@@ -644,8 +644,6 @@ class Parser:
         token_newline = self.consume(TokenID.NewLine)
         return FieldNode(self.context, token_name, token_colon, field_type, token_equal, default_value, token_newline)
 
-
-
     def parse_type_parents(self) -> SyntaxCollection[TypeNode]:
         # """
         # type_parents:

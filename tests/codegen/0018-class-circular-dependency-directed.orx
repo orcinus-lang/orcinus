@@ -1,0 +1,5 @@
+# ERROR: Circular dependency
+
+
+class A(A):
+    pass

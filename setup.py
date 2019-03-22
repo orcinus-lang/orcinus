@@ -18,7 +18,6 @@ setup(
         'llvmlite==0.28.0',
         'multidict==4.5.2',
         'colorlog==3.1.4',
-        'pytest==4.3.0',
         'json-rpc==1.12.1',
         'more-itertools==6.0.0',
     ],
@@ -28,7 +27,12 @@ setup(
             'mkdocs-material',
             'markdown-checklist',
             'pygments',
+        ],
+        'tests': [
+            'pytest==4.3.1',
+            'pycodestyle==2.5.0',
+            'pytest-cov==2.6.1',
+            'pytest-pycodestyle==1.4.0',
         ]
     },
-    include_package_data=True,
 )

@@ -7,7 +7,7 @@ from jsonrpc import Dispatcher, JSONRPCResponseManager
 from jsonrpc.jsonrpc2 import JSONRPC20Request
 
 from orcinus.diagnostics import DiagnosticManager
-from orcinus.server.constants import TextDocumentSyncKind, DOCUMENT_PUBLISH_DIAGNOSTICS, CompletionItemKind
+from orcinus.server.constants import TextDocumentSyncKind, DOCUMENT_PUBLISH_DIAGNOSTICS
 from orcinus.server.converters import from_lsp_position, to_lsp_diagnostic, to_lsp_completion_kind
 # from orcinus.syntax import AliasAST, ImportModuleAST
 from orcinus.symbols import Type
@@ -216,9 +216,9 @@ class LanguageTCPClient:
 
         items = []
         # if isinstance(node, ParameterNode):
-            #     if node.token_colon is founded_symbol:
-            #         # a:<-
-            #     elif node.type
+        #     if node.token_colon is founded_symbol:
+        #         # a:<-
+        #     elif node.type
         types = document.semantic_model.get_types()
         types = sorted(set(types), key=lambda t: t.name)
 

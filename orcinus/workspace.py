@@ -285,7 +285,7 @@ class Document:
     @property
     def semantic_context(self) -> SemanticContext:
         if not self.__semantic_context:
-            self.__semantic_context= SemanticContext(SemanticLoader(self.workspace), diagnostics=self.diagnostics)
+            self.__semantic_context = SemanticContext(SemanticLoader(self.workspace), diagnostics=self.diagnostics)
         return self.__semantic_context
 
     @property

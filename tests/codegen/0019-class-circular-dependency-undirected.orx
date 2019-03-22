@@ -1,0 +1,11 @@
+# ERROR: Circular dependency
+
+
+class A(B):
+    pass
+
+class B(C):
+    pass
+
+class C(A):
+    pass
