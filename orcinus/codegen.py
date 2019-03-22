@@ -44,9 +44,13 @@ class ModuleEmitter:
         return self.__llvm_functions
 
     @cached_property
-    def llvm_malloc(self):
+    def llvm_malloc(self) -> ir.Function:
         llvm_type = ir.FunctionType(ir.IntType(8).as_pointer(), [ir.IntType(64)])
         return ir.Function(self.llvm_module, llvm_type, 'malloc')
+
+    @cached_property
+    def llvm_size(self) -> ir.Type:
+        return ir.IntType(64)
 
     @property
     def is_normalize(self) -> bool:
@@ -98,8 +102,16 @@ class ModuleEmitter:
             return ir.LiteralStructType([])
         elif isinstance(symbol, VoidType):
             return ir.LiteralStructType([])
+        elif isinstance(symbol, StringType):
+            return ir.IntType(8).as_pointer()
         elif isinstance(symbol, ClassType):
             return self.llvm_context.get_identified_type(symbol.mangled_name).as_pointer()
+        elif isinstance(symbol, ArrayType):
+            # {size_t, T*}
+            llvm_size = self.llvm_size
+            llvm_element = self.llvm_types[symbol.element_type]
+            llvm_array = llvm_element.as_pointer()
+            return ir.LiteralStructType([llvm_size, llvm_array])
 
         raise DiagnosticError(symbol.location, f'Conversion to LLVM is not implemented: {type(symbol).__name__}')
 

@@ -11,6 +11,7 @@ from typing import Deque, List, Tuple
 from typing import MutableMapping
 
 from orcinus.collections import LazyDictionary
+from orcinus.exceptions import OrcinusError
 from orcinus.symbols import *
 from orcinus.syntax import *
 from orcinus.utils import cached_property
@@ -125,7 +126,6 @@ class SemanticModel:
     def __init__(self, context: SemanticContext, tree: SyntaxTree):
         self.context = context
         self.tree = tree
-        self.imports = {}
         self.is_analyzed = False  # True, if analysis is complete
 
         self.__globals = GlobalEnvironment(self)
@@ -154,43 +154,6 @@ class SemanticModel:
     def globals(self) -> GlobalEnvironment:
         return self.__globals
 
-    # def import_symbol(self, module: Module, name: str, alias: Optional[str] = None) -> bool:
-    #     members = [member for member in module.members if member.name == name]
-    #
-    #     if members and all(isinstance(member, Function) for member in members):
-    #         functions = cast(Sequence[Function], members)
-    #         member = Overload(module, alias or name, functions, members[0].location)
-    #     elif len(members) != 1:
-    #         return False
-    #     else:
-    #         member = members[0]
-    #     self.imports[alias or name] = member
-    #     return True
-    #
-    # def import_all(self, module: Module):
-    #     for name in {member.name for member in module.members}:
-    #         self.import_symbol(module, name)
-    #
-    # def import_symbols(self):
-    #     if self.module is not self.symbol_context.builtins_module:
-    #         self.import_all(self.symbol_context.builtins_module)
-    #
-    #     for node in self.tree.imports:
-    #         if isinstance(node, ImportFromNode):
-    #             # Attempt to open module
-    #             try:
-    #                 module = self.context.open(node.module).module
-    #             except OrcinusError as ex:
-    #                 self.diagnostics.error(node.location, str(ex))
-    #                 continue
-    #
-    #             # Load aliases from nodes
-    #             for alias in node.aliases:  # type: AliasNode
-    #                 if not self.import_symbol(module, alias.name, alias.alias):
-    #                   self.diagnostics.error(node.location, f'Cannot import name ‘{alias.name}’ from ‘{module.name}’')
-    #         else:
-    #             self.diagnostics.error(node.location, 'Not implemented member')
-
     def analyze(self):
         # check if analysis is completed
         if self.is_analyzed:
@@ -198,10 +161,14 @@ class SemanticModel:
         self.is_analyzed = True
 
         # # import symbols
-        # self.import_symbols()
+        annotator = ImportAnnotator(self.globals)
+        if self.module is not self.symbol_context.builtins_module:
+            annotator.import_all(self.symbol_context.builtins_module)
+
+        for node in self.tree.imports:
+            annotator.visit(node)
 
         # initialize all symbols
-        self.symbols.get(self.tree)  # start symbol initialization
         self.__initializer.analyze()
 
         # emit functions
@@ -824,6 +791,48 @@ class EnvironmentAnnotator(SemanticMixin, NodeVisitor[SemanticEnvironment]):
         return StaticEnvironment(self.model.environments[node.parent])
 
 
+class ImportAnnotator(SemanticMixin, ImportVisitor[None]):
+    def import_symbol(self, module: Module, name: str, alias: Optional[str] = None) -> bool:
+        # members = [member for member in module.members if member.name == name]
+        member = module.get_member(name)
+
+        # if members and all(isinstance(member, Function) for member in members):
+        #     functions = cast(Sequence[Function], members)
+        #     member = Overload(module, alias or name, functions, members[0].location)
+        # elif len(members) != 1:
+        #     return False
+        # else:
+        #     member = members[0]
+        self.environment.define(alias or name, SemanticSymbol.from_symbol(self.environment, member))
+        return True
+
+    def import_all(self, module: Module):
+        for name in {member.name for member in module.members}:
+            self.import_symbol(module, name)
+
+    def visit_import(self, node: ImportNode):
+        for alias in node.aliases:
+            try:
+                module = self.model.context.open(alias.name).module
+            except OrcinusError as ex:
+                self.diagnostics.error(alias.location, str(ex))
+            else:
+                self.diagnostics.error(alias.location, 'Not implemented import')
+
+    def visit_from_import(self, node: ImportFromNode):
+        # Attempt to open module
+        try:
+            module = self.model.context.open(node.module).module
+        except OrcinusError as ex:
+            self.diagnostics.error(node.location, str(ex))
+            return
+
+            # Load aliases from nodes
+        for alias in node.aliases:
+            if not self.import_symbol(module, alias.name, alias.alias):
+                self.diagnostics.error(node.location, f'Cannot import name ‘{alias.name}’ from ‘{module.name}’')
+
+
 class ScopeAnnotator(SemanticMixin, NodeVisitor[SemanticScope]):
     def __call__(self, node: SyntaxNode) -> SemanticScope:
         return self.visit(node)
@@ -1063,6 +1072,8 @@ class ModuleMemberAnnotator(ParentMemberAnnotator):
         if self.environment.module == self.environment.symbol_context.builtins_module:
             if node.name == TYPE_STRING_NAME:
                 return StringType(self.parent, location=node.location)
+            elif node.name == TYPE_ARRAY_NAME:
+                return ArrayType(self.parent, location=node.location)
 
         return super().visit_class(node)
 

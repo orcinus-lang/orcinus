@@ -2288,7 +2288,7 @@ class AbstractImportVisitor(Generic[R], abc.ABC):
 
 
 class ImportVisitor(AbstractImportVisitor[R], abc.ABC):
-    def visit(self, node: TypeNode) -> R:
+    def visit(self, node: ImportNode) -> R:
         if isinstance(node, ImportFromNode):
             return self.visit_from_import(node)
         elif isinstance(node, ImportNode):

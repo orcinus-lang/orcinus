@@ -27,6 +27,9 @@ TYPE_VOID_NAME = 'void'
 TYPE_STRING_NAME = 'str'
 TYPE_FLOAT_NAME = 'float'
 
+TYPE_FUNCTION_NAME = 'Function'
+TYPE_ARRAY_NAME = 'Array'
+
 VALUE_NONE_NAME = 'None'
 VALUE_TRUE_NAME = 'True'
 VALUE_FALSE_NAME = 'False'
@@ -82,6 +85,12 @@ class SymbolContext:
         founded_type = next((tpy for tpy in self.builtins_module.types if tpy.name == TYPE_STRING_NAME), None)
         assert isinstance(founded_type, StringType)
         return cast(StringType, founded_type)
+
+    @cached_property
+    def array_type(self) -> ArrayType:
+        founded_type = next((tpy for tpy in self.builtins_module.types if tpy.name == TYPE_ARRAY_NAME), None)
+        assert isinstance(founded_type, ArrayType)
+        return cast(ArrayType, founded_type)
 
     def add_module(self, module: Module):
         self.modules[module.name] = module
@@ -601,7 +610,7 @@ class EnumType(Type):
 
 class FunctionType(Type):
     def __init__(self, owner: Container, parameters: Sequence[Type], return_type: Type, location: Location):
-        super(FunctionType, self).__init__(owner, "Function", location)
+        super(FunctionType, self).__init__(owner, TYPE_FUNCTION_NAME, location)
 
         assert isinstance(return_type, Type)
         assert all(isinstance(param_type, Type) for param_type in parameters)
@@ -630,6 +639,42 @@ class FunctionType(Type):
     def __str__(self):
         parameters = ', '.join(str(param_type) for param_type in self.parameters)
         return f"({parameters}) -> {self.return_type}"
+
+
+class ArrayMetaclass(abc.ABCMeta, type):
+    def __call__(cls, owner: Container, element_type: Type = None, *, location: Location):
+        if element_type:
+            module = owner if isinstance(owner, Module) else owner.module
+            return module.context.array_type.instantiate(module, [element_type], location)
+
+        assert not element_type
+        return type.__call__(cls, owner, location)
+
+
+class ArrayType(Type, metaclass=ArrayMetaclass):
+    def __init__(self, owner: Container, location: Location):
+        super(ArrayType, self).__init__(owner, TYPE_ARRAY_NAME, location)
+
+    @property
+    def element_type(self) -> Type:
+        return self.generic_parameters[0] if self.generic_parameters else self.generic_arguments[0]
+
+    def __hash__(self):
+        return id(self)
+
+    def __eq__(self, other):
+        if not isinstance(other, ArrayType):
+            return False
+        return self.element_type == other.element_type
+
+    def build(self):
+        if self.generic_parameters and len(self.generic_parameters) != 1:
+            self.context.diagnostics.error("Array type must have one generic parameter")
+
+        super().build()
+
+    def instantiate_type(self, module: Module) -> Type:
+        return ArrayType(module, location=self.location)
 
 
 class Property(Child):
