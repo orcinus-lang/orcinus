@@ -1604,10 +1604,11 @@ class NameManglingBuilder:
 
         buffer.write('f')
         self.write(buffer, str(len(symbol.parameters)))
-        buffer.write('_')
+        buffer.write('_p')
         for parameter in symbol.parameters:
             self.add_type(buffer, parameter.type)
 
+        buffer.write('_r')
         self.add_type(buffer, symbol.return_type)
         return buffer.getvalue()
 
@@ -1634,7 +1635,8 @@ class NameManglingBuilder:
 
         return self.write(buffer, symbol.name)
 
-    def write(self, buffer: io.StringIO, name: str):
+    @staticmethod
+    def write(buffer: io.StringIO, name: str):
         buffer.write(str(len(name)))
         buffer.write(name)
 

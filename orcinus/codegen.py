@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import itertools
 import logging
-from typing import Mapping
+from typing import Mapping, Callable
 
 from llvmlite import ir, binding
 
@@ -187,6 +187,17 @@ class FunctionEmitter:
 
         raise DiagnosticError(value.location, f'Conversion to LLVM is not implemented: {type(value).__name__}')
 
+    @staticmethod
+    def get_builtin(func: Function) -> Optional[BuiltinEmitter]:
+        if isinstance(func.owner, IntegerType):
+            return INTEGER_BUILTINS.get(func.name)
+
+        elif isinstance(func.owner, BooleanType):
+            return BOOLEAN_BUILTINS.get(func.name)
+
+        elif isinstance(func.owner, ArrayType):
+            return ARRAY_BUILTINS.get(func.name)
+
     def emit_instruction(self, inst: Instruction) -> ir.Value:
         if isinstance(inst, ReturnInstruction):
             result = self.emit_return_instruction(inst)
@@ -242,27 +253,9 @@ class FunctionEmitter:
     def emit_call_instruction(self, inst: CallInstruction) -> ir.Value:
         llvm_arguments = [self.get_value(arg) for arg in inst.arguments]
 
-        # TODO: Builtins calls
-        if inst.function.name == '__neg__':
-            return self.llvm_builder.neg(llvm_arguments[0], name=inst.name)
-        if inst.function.name == '__pos__':
-            return llvm_arguments[0]
-        elif inst.function.name == '__add__':
-            return self.llvm_builder.add(llvm_arguments[0], llvm_arguments[1], name=inst.name)
-        elif inst.function.name == '__eq__':
-            return self.llvm_builder.icmp_signed('==', llvm_arguments[0], llvm_arguments[1], name=inst.name)
-        elif inst.function.name == '__ne__':
-            return self.llvm_builder.icmp_signed('!=', llvm_arguments[0], llvm_arguments[1], name=inst.name)
-        elif inst.function.name == '__lt__':
-            return self.llvm_builder.icmp_signed('<', llvm_arguments[0], llvm_arguments[1], name=inst.name)
-        elif inst.function.name == '__le__':
-            return self.llvm_builder.icmp_signed('<=', llvm_arguments[0], llvm_arguments[1], name=inst.name)
-        elif inst.function.name == '__gt__':
-            return self.llvm_builder.icmp_signed('>', llvm_arguments[0], llvm_arguments[1], name=inst.name)
-        elif inst.function.name == '__ge__':
-            return self.llvm_builder.icmp_signed('>=', llvm_arguments[0], llvm_arguments[1], name=inst.name)
-
-        # TODO: Invoke calls
+        builtin_emitter = self.get_builtin(inst.function)
+        if builtin_emitter:
+            return builtin_emitter(self, llvm_arguments, name=inst.name)
 
         llvm_function = self.llvm_functions[inst.function]
         return self.llvm_builder.call(llvm_function, llvm_arguments, name=inst.name)
@@ -297,6 +290,150 @@ class FunctionEmitter:
             ir.Constant(ir.IntType(32), index),
         ])
         return self.llvm_builder.load(llvm_index)
+
+
+BuiltinEmitter = Callable[[FunctionEmitter, Sequence[ir.Value], str], ir.Value]
+
+
+class IntegerBuiltin:
+    @staticmethod
+    def emit_neg(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.neg(*arguments, name=name)
+
+    @staticmethod
+    def emit_pos(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return arguments[0]
+
+    @staticmethod
+    def emit_inv(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.not_(*arguments, name=name)
+
+    @staticmethod
+    def emit_add(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.add(*arguments, name=name)
+
+    @staticmethod
+    def emit_sub(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.sub(*arguments, name=name)
+
+    @staticmethod
+    def emit_mul(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.mul(*arguments, name=name)
+
+    @staticmethod
+    def emit_and(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.and_(*arguments, name=name)
+
+    @staticmethod
+    def emit_or(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.or_(*arguments, name=name)
+
+    @staticmethod
+    def emit_xor(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.xor(*arguments, name=name)
+
+    @staticmethod
+    def emit_eq(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.icmp_signed('==', *arguments, name=name)
+
+    @staticmethod
+    def emit_ne(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.icmp_signed('!=', *arguments, name=name)
+
+    @staticmethod
+    def emit_lt(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.icmp_signed('<', *arguments, name=name)
+
+    @staticmethod
+    def emit_le(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.icmp_signed('<=', *arguments, name=name)
+
+    @staticmethod
+    def emit_gt(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.icmp_signed('>', *arguments, name=name)
+
+    @staticmethod
+    def emit_ge(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.icmp_signed('>=', *arguments, name=name)
+
+
+class BooleanBuiltins:
+    @staticmethod
+    def emit_not(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.not_(*arguments, name=name)
+
+    @staticmethod
+    def emit_and(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.and_(*arguments, name=name)
+
+    @staticmethod
+    def emit_or(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.or_(*arguments, name=name)
+
+    @staticmethod
+    def emit_xor(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.xor(*arguments, name=name)
+
+    @staticmethod
+    def emit_eq(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.icmp_signed('==', *arguments, name=name)
+
+    @staticmethod
+    def emit_ne(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.icmp_signed('!=', *arguments, name=name)
+
+
+class ArrayBuiltins:
+    @staticmethod
+    def emit_len(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        return emitter.llvm_builder.extract_value(arguments[0], [0], name=name)
+
+    @staticmethod
+    def emit_getitem(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        llvm_array = emitter.llvm_builder.extract_value(arguments[0], [1])
+        llvm_value = emitter.llvm_builder.gep(llvm_array, [arguments[1]])
+        return emitter.llvm_builder.load(llvm_value, name=name)
+
+    @staticmethod
+    def emit_setitem(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        llvm_array = emitter.llvm_builder.extract_value(arguments[0], [1])
+        llvm_value = emitter.llvm_builder.gep(llvm_array, [arguments[1]])
+        emitter.llvm_builder.store(arguments[2], llvm_value)
+        return ir.Constant.literal_struct([])
+
+
+INTEGER_BUILTINS = {
+    '__neg__': IntegerBuiltin.emit_neg,
+    '__pos__': IntegerBuiltin.emit_pos,
+    '__inv__': IntegerBuiltin.emit_inv,
+    '__add__': IntegerBuiltin.emit_add,
+    '__sub__': IntegerBuiltin.emit_sub,
+    '__mul__': IntegerBuiltin.emit_mul,
+    '__and__': IntegerBuiltin.emit_and,
+    '__or__': IntegerBuiltin.emit_or,
+    '__xor__': IntegerBuiltin.emit_xor,
+    '__eq__': IntegerBuiltin.emit_eq,
+    '__ne__': IntegerBuiltin.emit_ne,
+    '__lt__': IntegerBuiltin.emit_lt,
+    '__le__': IntegerBuiltin.emit_le,
+    '__gt__': IntegerBuiltin.emit_gt,
+    '__ge__': IntegerBuiltin.emit_ge,
+}
+
+BOOLEAN_BUILTINS = {
+    '__not__': BooleanBuiltins.emit_not,
+    '__and__': BooleanBuiltins.emit_and,
+    '__or__': BooleanBuiltins.emit_or,
+    '__xor__': BooleanBuiltins.emit_xor,
+    '__eq__': BooleanBuiltins.emit_eq,
+    '__ne__': BooleanBuiltins.emit_ne,
+}
+
+ARRAY_BUILTINS = {
+    '__len__': ArrayBuiltins.emit_len,
+    '__getitem__': ArrayBuiltins.emit_getitem,
+    '__setitem__': ArrayBuiltins.emit_setitem,
+}
 
 
 def initialize_codegen():
