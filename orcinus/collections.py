@@ -5,15 +5,15 @@
 from __future__ import annotations
 
 import itertools
-from typing import MutableMapping, Callable, Iterator, TypeVar
+from typing import MutableMapping, Callable, Iterator, TypeVar, Optional
 
 K = TypeVar('K')
 V = TypeVar('V')
 
 
 class LazyDictionary(MutableMapping[K, V]):
-    def __init__(self, seq=None, *, constructor: Callable[[K], V], initializer: Callable[[K], None] = None, **kwargs):
-        self.__items = dict(seq or (), **kwargs)
+    def __init__(self,  constructor: Callable[[K], Optional[V]], initializer: Callable[[K], None] = None):
+        self.__items = dict()
         self.__constructor = constructor
         self.__initializer = initializer or (lambda x: None)
 
@@ -31,8 +31,7 @@ class LazyDictionary(MutableMapping[K, V]):
             if value is None:
                 return value
 
-            self.__items[key] = value
-            self.__initializer(key)
+            self[key] = value
             return value
 
     def __setitem__(self, key: K, value: V):

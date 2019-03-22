@@ -329,6 +329,10 @@ class GenericSymbol(Child, abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def add_generic_parameter(self, generic: GenericType):
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def instantiate(self, module: Module, generic_arguments: Sequence[Type], location: Location):
         raise NotImplementedError
 
@@ -420,7 +424,7 @@ class Type(GenericSymbol, Container, abc.ABC):
             raise RuntimeError(u'Can not add parent: Circular dependency involving')
         self.__parents.append(parent)
 
-    def add_generic(self, generic: GenericType):
+    def add_generic_parameter(self, generic: GenericType):
         self.__generic_parameters.append(generic)
 
     def add_attribute(self, attr: Attribute):
@@ -830,7 +834,7 @@ class Function(GenericSymbol, Value):
     def scope(self) -> NamedScope:
         return self.__scope
 
-    def add_generic(self, generic: GenericType):
+    def add_generic_parameter(self, generic: GenericType):
         self.__generic_parameters.append(generic)
 
     def add_attribute(self, attr: Attribute):

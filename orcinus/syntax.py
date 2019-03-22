@@ -2702,6 +2702,8 @@ class NodeVisitor(Generic[R],
             return self.visit_keyword_argument(node)
         elif isinstance(node, DictArgumentNode):
             return self.visit_dict_argument(node)
+        elif isinstance(node, GenericParameterNode):
+            return self.visit_generic_parameter(node)
 
         raise DiagnosticError(node.location, f"Not implemented visitor for {type(node).__name__}")
 
@@ -2722,6 +2724,9 @@ class NodeVisitor(Generic[R],
         return self.visit_node(node)
 
     def visit_type(self, node: TypeNode) -> R:
+        return self.visit_node(node)
+
+    def visit_member(self, node: MemberNode) -> R:
         return self.visit_node(node)
 
     def visit_statement(self, node: StatementNode) -> R:
@@ -2755,6 +2760,9 @@ class NodeVisitor(Generic[R],
         return self.visit_argument(node)
 
     def visit_dict_argument(self, node: DictArgumentNode) -> R:
+        return self.visit_node(node)
+
+    def visit_generic_parameter(self, node: GenericParameterNode) -> R:
         return self.visit_node(node)
 
 
