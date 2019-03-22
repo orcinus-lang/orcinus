@@ -189,6 +189,8 @@ def test_compile_and_execution(caplog, capsys, source_cases):
             input=script.inputs
         )
 
+        assert result.completed != bool(script.errors), "Compilation is failed with errors"
+
         if script.result_code is not None:
             assert result.result_code == script.result_code
 
