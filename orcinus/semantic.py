@@ -213,6 +213,9 @@ class SemanticModel:
                 emitter = LocalEnvironment(self.environments[func.parent], func)
                 emitter.analyze()
 
+    def initialize(self, symbol: SemanticSymbol):
+        self.__initializer.analyze_symbol(symbol)
+
     def __repr__(self):
         return f'<SemanticModel: {self.module}>'
 
@@ -528,6 +531,7 @@ class SemanticType(SemanticSymbol):
         return self.type
 
     def as_type(self, location: Location) -> Type:
+        self.model.initialize(self)  # force initialization
         return self.type
 
     def as_value(self, location: Location) -> Value:
@@ -546,10 +550,9 @@ class SemanticType(SemanticSymbol):
     def add_attribute(self, attribute: Attribute):
         self.type.add_attribute(attribute)
 
-    def build(self):
-        return self.type.build()
-
     def instantiate(self, arguments: Sequence[Type], location: Location) -> SemanticType:
+        self.model.initialize(self)  # force initialization
+
         instance = self.type.instantiate(self.environment.module, arguments, location)
         return SemanticType(self.environment, instance)
 
@@ -882,7 +885,7 @@ class SymbolAnnotator(SemanticMixin, NodeVisitor[Optional[Symbol]]):
 
     def visit_parameterized_type(self, node: ParameterizedTypeNode) -> SemanticSymbol:
         symbol: SemanticSymbol = self.visit(node.type)
-        return symbol.instantiate([self.visit(arg) for arg in node.arguments], node.location)
+        return symbol.instantiate([self.as_type(arg) for arg in node.arguments], node.location)
 
     def visit_auto_type(self, node: AutoTypeNode) -> R:
         self.diagnostics.error("Not implemented type inference")
@@ -891,18 +894,38 @@ class SymbolAnnotator(SemanticMixin, NodeVisitor[Optional[Symbol]]):
 
 class SymbolInitializer(SemanticMixin, NodeVisitor[None]):
     queue: Deque[SyntaxNode]  # Queue with not annotated or initialized nodes
+    initialized: Set[SyntaxNode]
 
     def __init__(self, environment: SemanticEnvironment):
         super().__init__(environment)
 
         self.queue = Deque[SyntaxNode]()
+        self.initialized = set()
+        self.mapping = {}
 
     def __call__(self, node: SyntaxNode):
+        if node in self.initialized:
+            return
+
         self.queue.append(node)
+        self.mapping[self.model.symbols[node]] = node
 
     def analyze(self):
         while self.queue:
-            self.visit(self.queue.popleft())
+            self.analyze_node(self.queue.popleft())
+
+    def analyze_symbol(self, symbol: SemanticSymbol):
+        if symbol not in self.mapping:
+            return
+
+        self.analyze_node(self.mapping[symbol])
+        del self.mapping[symbol]  # remove from mapping
+
+    def analyze_node(self, node: SyntaxNode):
+        if node in self.initialized:
+            return
+        self.initialized.add(node)
+        self.visit(node)
 
     def annotate_members(self, symbol: SemanticSymbol, members: Sequence[MemberNode]):
         types: List[TypeDeclarationNode] = []
@@ -922,13 +945,12 @@ class SymbolInitializer(SemanticMixin, NodeVisitor[None]):
             if member:
                 symbol.add_member(member)
 
-    def add_decorators(self, symbol: SemanticSymbol, decorators: Sequence[DecoratorNode]):
+    def annotate_decorators(self, symbol: SemanticSymbol, decorators: Sequence[DecoratorNode]):
         # insert attributes
         for attr in [self.model.symbols[decorator] for decorator in decorators]:
             symbol.add_attribute(cast(Attribute, attr))
 
-    def add_parents(self, symbol: SemanticType, parents: Sequence[TypeNode]):
-
+    def annotate_parents(self, symbol: SemanticType, parents: Sequence[TypeNode]):
         for node in parents:
             parent = self.as_type(node)
             if parent is symbol.type or symbol.type in parent.ascendants:
@@ -958,15 +980,15 @@ class SymbolInitializer(SemanticMixin, NodeVisitor[None]):
     def visit_type_declaration(self, node: TypeDeclarationNode):
         semantic_type = cast(SemanticType, self.model.symbols[node])
         self.annotate_generic_parameters(semantic_type, node.generic_parameters)
-        self.add_parents(semantic_type, node.parents)
+        self.annotate_parents(semantic_type, node.parents)
         self.annotate_members(semantic_type, node.members)
-        semantic_type.build()
+        semantic_type.type.build()
 
     def visit_function(self, node: FunctionNode):
         function = cast(SemanticFunction, self.model.symbols[node])
 
         self.annotate_generic_parameters(function, node.generic_parameters)
-        self.add_decorators(function, node.decorators)
+        self.annotate_decorators(function, node.decorators)
 
 
 class ParentMemberAnnotator(SemanticMixin, MemberVisitor[Optional[Symbol]]):

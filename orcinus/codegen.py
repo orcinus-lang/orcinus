@@ -74,13 +74,15 @@ class ModuleEmitter:
         if func.is_generic:
             raise DiagnosticError(func.location, f'Conversion to LLVM for generic function is not allowed')
 
+        is_main = func.name == 'main'
+
         llvm_arguments = [self.llvm_types[param.type] for param in func.parameters]
         llvm_returns = self.llvm_types[func.return_type]
         llvm_type = ir.FunctionType(llvm_returns, llvm_arguments)
-        llvm_func = ir.Function(self.llvm_module, llvm_type, func.native_name or func.name)
+        llvm_func = ir.Function(self.llvm_module, llvm_type, func.name if is_main else func.mangled_name)
         for param, arg in zip(func.parameters, llvm_func.args):
             arg.name = param.name
-        llvm_func.linkage = 'external' if func.is_abstract or func.name == 'main' else 'internal'
+        llvm_func.linkage = 'external' if func.is_abstract or is_main else 'internal'
 
         return llvm_func
 
@@ -97,7 +99,7 @@ class ModuleEmitter:
         elif isinstance(symbol, VoidType):
             return ir.LiteralStructType([])
         elif isinstance(symbol, ClassType):
-            return self.llvm_context.get_identified_type(str(symbol)).as_pointer()
+            return self.llvm_context.get_identified_type(symbol.mangled_name).as_pointer()
 
         raise DiagnosticError(symbol.location, f'Conversion to LLVM is not implemented: {type(symbol).__name__}')
 

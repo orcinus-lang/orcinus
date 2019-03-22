@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import abc
 import contextlib
+import io
 import weakref
 from io import StringIO
 from typing import cast, Sequence, Optional, Set
@@ -376,6 +377,11 @@ class Type(GenericSymbol, Container, abc.ABC):
     def name(self) -> str:
         return self.__name
 
+    @cached_property
+    def mangled_name(self) -> str:
+        builder = NameManglingBuilder()
+        return builder.mangle(self)
+
     @property
     def location(self) -> Location:
         return self.__location
@@ -462,12 +468,12 @@ class Type(GenericSymbol, Container, abc.ABC):
         raise RuntimeError('Can not instantiate non generic type')
 
     def instantiate(self, module: Module, generic_arguments: Sequence[Type], location: Location) -> Type:
-        if len(self.generic_parameters) != len(generic_arguments):
-            self.context.diagnostics.error(location, 'Can not instantiate type: mismatch count of arguments')
+        if not self.generic_parameters:
+            self.context.diagnostics.error(location, 'Can not instantiate non generic type')
             return self
 
-        if not self.generic_parameters:
-            self.context.diagnostics.error(location, 'Can not instantiate type: type is not generic')
+        if len(self.generic_parameters) != len(generic_arguments):
+            self.context.diagnostics.error(location, 'Can not instantiate type with mismatch count of arguments')
             return self
 
         # self instantiate
@@ -811,6 +817,14 @@ class Function(GenericSymbol, Value):
             if len(native_attr.arguments) == 1:
                 assert isinstance(native_attr.arguments[0], StringConstant)
                 return cast(StringConstant, native_attr.arguments[0]).value
+
+    @cached_property
+    def mangled_name(self) -> str:
+        if self.is_native:
+            return self.native_name
+
+        builder = NameManglingBuilder()
+        return builder.mangle(self)
 
     @property
     def function_type(self) -> FunctionType:
@@ -1506,6 +1520,78 @@ class InstantiateBuilder:
             instance.add_attribute(attr)
         self.add(original, instance)
         return instance
+
+
+class NameManglingBuilder:
+    def mangle(self, symbol: Symbol) -> str:
+        if isinstance(symbol, ClassType):
+            return self.mangle_class(symbol)
+        elif isinstance(symbol, Function):
+            return self.mangle_function(symbol)
+
+        raise NotImplementedError
+
+    def mangle_class(self, symbol: ClassType) -> str:
+        buffer = io.StringIO()
+        buffer.write("_OC")
+
+        self.add_owner(buffer, symbol.owner)
+        self.write(buffer, symbol.name)
+
+        if symbol.generic_parameters:
+            buffer.write("p")
+            for param in symbol.generic_parameters:
+                self.add_type(buffer, param)
+
+        if symbol.generic_arguments:
+            buffer.write("a")
+            for param in symbol.generic_arguments:
+                self.add_type(buffer, param)
+
+        return buffer.getvalue()
+
+    def mangle_function(self, symbol: Function) -> str:
+        buffer = io.StringIO()
+        buffer.write("_OF")
+
+        self.add_owner(buffer, symbol.owner)
+        self.write(buffer, symbol.name)
+
+        buffer.write('f')
+        self.write(buffer, str(len(symbol.parameters)))
+        buffer.write('_')
+        for parameter in symbol.parameters:
+            self.add_type(buffer, parameter.type)
+
+        self.add_type(buffer, symbol.return_type)
+        return buffer.getvalue()
+
+    def add_owner(self, buffer: io.StringIO, symbol: Container):
+        if isinstance(symbol, Type):
+            self.add_owner(buffer, symbol.owner)
+
+            return self.write(buffer, symbol.name)
+
+        elif isinstance(symbol, Module):
+            return self.write(buffer, symbol.name)
+
+        raise NotImplemented
+
+    def add_type(self, buffer: io.StringIO, symbol: Type):
+        if isinstance(symbol, IntegerType):
+            return self.write(buffer, 'i32')
+        elif isinstance(symbol, BooleanType):
+            return self.write(buffer, 'b')
+        elif isinstance(symbol, StringType):
+            return self.write(buffer, 's')
+        elif isinstance(symbol, VoidType):
+            return self.write(buffer, 'v')
+
+        return self.write(buffer, symbol.name)
+
+    def write(self, buffer: io.StringIO, name: str):
+        buffer.write(str(len(name)))
+        buffer.write(name)
 
 
 def create_native_attribute(module: Module, name: str = None, *, location: Location) -> Attribute:
