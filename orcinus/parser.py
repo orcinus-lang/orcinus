@@ -644,6 +644,8 @@ class Parser:
         token_newline = self.consume(TokenID.NewLine)
         return FieldNode(self.context, token_name, token_colon, field_type, token_equal, default_value, token_newline)
 
+
+
     def parse_type_parents(self) -> SyntaxCollection[TypeNode]:
         # """
         # type_parents:
@@ -693,10 +695,28 @@ class Parser:
     def parse_generic_parameter(self) -> GenericParameterNode:
         # """
         # generic_parameter:
-        #     Name
+        #     Name [ ':' type_arguments ]
         # """
         token_name = self.consume(TokenID.Name)
-        return GenericParameterNode(self.context, token_name)
+        if self.match(TokenID.Colon):
+            token_colon = self.consume()
+            concepts = self.parse_generic_concepts()
+        else:
+            token_colon = None
+            concepts = SyntaxCollection[TypeNode]()
+
+        return GenericParameterNode(self.context, token_name, token_colon, concepts)
+
+    def parse_generic_concepts(self) -> SyntaxCollection[TypeNode]:
+        # """
+        # generic_concepts
+        #     type { '|' type }
+        # """
+        arguments = [self.parse_type()]
+        while self.match(TokenID.VerticalLine):
+            arguments.append(self.consume(TokenID.VerticalLine))
+            arguments.append(self.parse_type())
+        return SyntaxCollection(arguments)
 
     def parse_function_parameters(self) -> SyntaxCollection[ParameterNode]:
         # """
@@ -746,14 +766,14 @@ class Parser:
         result_type = NamedTypeNode(self.context, token_name)
 
         while self.match(TokenID.LeftSquare):
-            arguments = self.parse_generic_arguments()
+            arguments = self.parse_type_arguments()
             result_type = ParameterizedTypeNode(self.context, result_type, arguments)
 
         return result_type
 
-    def parse_generic_arguments(self) -> SyntaxCollection[TypeNode]:
+    def parse_type_arguments(self) -> SyntaxCollection[TypeNode]:
         # """
-        # generic_arguments:
+        # type_arguments:
         #     '[' type { ',' type} ']'
         # """
 

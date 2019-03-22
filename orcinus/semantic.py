@@ -429,7 +429,7 @@ class SemanticInitializer(SemanticMixin):
         type = cast(Type, self.symbols[node])
 
         for parent_node in node.parents:
-            parent = self.symbols[parent_node].as_type(parent_node.location)
+            parent = self.as_type(parent_node)
             if parent is type or type in parent.ascendants:
                 # TODO: Can find all types involving in circular dependency
                 self.diagnostics.error(parent_node.location, "Circular dependency")

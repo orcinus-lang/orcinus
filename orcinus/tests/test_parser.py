@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 from orcinus.syntax import *
-from orcinus.tests.utils.parser import parse_statement, parse_expression
+from orcinus.tests.utils.parser import parse_statement, parse_expression, parse_member
 
 
-def test_parse_unary_expressions():
+def test_parse_unary():
     _, node = parse_expression("+1")
     assert isinstance(node, UnaryExpressionNode)
     assert isinstance(node.argument, IntegerExpressionNode)
@@ -34,7 +34,7 @@ def test_parse_unary_expressions():
     assert node.token_operator.id == TokenID.Tilde
 
 
-def test_parse_binary_expressions():
+def test_parse_binary():
     _, node = parse_expression("1 + 1")
     assert isinstance(node, BinaryExpressionNode)
     assert isinstance(node.left_argument, IntegerExpressionNode)
@@ -127,7 +127,7 @@ def test_parse_binary_expressions():
     assert node.token_operator.id == TokenID.DoubleStar
 
 
-def test_parse_logical_expressions():
+def test_parse_logical():
     _, node = parse_expression("1 and 1")
     assert isinstance(node, LogicExpressionNode)
     assert isinstance(node.left_argument, IntegerExpressionNode)
@@ -143,7 +143,7 @@ def test_parse_logical_expressions():
     assert node.token_operator.id == TokenID.Or
 
 
-def test_parse_compare_expression():
+def test_parse_compare():
     _, node = parse_expression("1 == 1")
     assert isinstance(node, CompareExpressionNode)
     assert isinstance(node.left_argument, IntegerExpressionNode)
@@ -235,7 +235,7 @@ def test_parse_compare_expression():
     assert node.comparators[0].token_suffix.id == TokenID.In
 
 
-def test_parse_condition_expression():
+def test_parse_condition():
     _, node = parse_expression("1 if 1 else 0")
     assert isinstance(node, ConditionExpressionNode)
     assert isinstance(node.condition, IntegerExpressionNode)
@@ -336,3 +336,42 @@ def test_parse_augmented_assignment():
     assert isinstance(node.source, IntegerExpressionNode)
     assert node.opcode == BinaryID.Pow
     assert node.token_operator.id == TokenID.DoubleStarEqual
+
+
+def test_parse_generic_functions():
+    _, node = parse_member("""
+def test[A, B: First, C: Second | Third](): ...
+    """)
+
+    assert isinstance(node, FunctionNode)
+    assert node.name == 'test'
+    assert isinstance(node.return_type, AutoTypeNode)
+    assert len(node.generic_parameters) == 3
+
+    gen1 = node.generic_parameters[0]
+    gen2 = node.generic_parameters[1]
+    gen3 = node.generic_parameters[2]
+
+    assert isinstance(gen1, GenericParameterNode)
+    assert gen1.name == 'A'
+    assert len(gen1.concepts) == 0
+
+    assert isinstance(gen2, GenericParameterNode)
+    assert gen2.name == 'B'
+    assert len(gen2.concepts) == 1
+
+    gen2_c1 = gen2.concepts[0]
+    assert isinstance(gen2_c1, NamedTypeNode)
+    assert gen2_c1.name == 'First'
+
+    assert isinstance(gen3, GenericParameterNode)
+    assert gen3.name == 'C'
+    assert len(gen3.concepts) == 2
+
+    gen3_c1 = gen3.concepts[0]
+    gen3_c2 = gen3.concepts[1]
+
+    assert isinstance(gen3_c1, NamedTypeNode)
+    assert gen3_c1.name == 'Second'
+    assert isinstance(gen3_c2, NamedTypeNode)
+    assert gen3_c2.name == 'Third'

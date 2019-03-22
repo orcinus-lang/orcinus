@@ -1012,11 +1012,19 @@ class NamedTypeNode(TypeNode):
 
 class GenericParameterNode(TypeNode):
     token_name: SyntaxToken
+    token_colon: SyntaxToken
+    concepts: SyntaxCollection[TypeNode]
 
-    def __init__(self, context: SyntaxContext, token_name: SyntaxToken):
+    def __init__(self,
+                 context: SyntaxContext,
+                 token_name: SyntaxToken,
+                 token_colon: SyntaxToken,
+                 concepts: SyntaxCollection[TypeNode]):
         super(GenericParameterNode, self).__init__(context)
 
         self.token_name = token_name
+        self.token_colon = token_colon
+        self.concepts = concepts
 
     @property
     def name(self) -> str:
@@ -1028,7 +1036,7 @@ class GenericParameterNode(TypeNode):
 
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
-        return [self.token_name]
+        return make_sequence([self.token_name, self.token_colon, self.concepts])
 
     def __str__(self) -> str:
         return f'{self.name} [{self.location}]'
