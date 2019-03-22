@@ -381,6 +381,8 @@ class SemanticSymbol(abc.ABC):
             return SemanticField(environment, symbol)
         elif isinstance(symbol, Property):
             return SemanticProperty(environment, symbol)
+        elif isinstance(symbol, Attribute):
+            return SemanticAttribute(environment, symbol)
 
         raise DiagnosticError(symbol.location, "Can not convert symbol to semantic symbol")
 
@@ -562,10 +564,10 @@ class SemanticFunction(SemanticSymbol):
 
     def add_generic(self, member: SemanticType):
         param = cast(GenericType, member.as_type(member.location))
-        self.type.add_generic_parameter(param)
+        self.function.add_generic_parameter(param)
 
     def add_attribute(self, attribute: Attribute):
-        self.type.add_attribute(attribute)
+        self.function.add_attribute(attribute)
 
     def instantiate(self, arguments: Sequence[Type], location: Location) -> SemanticFunction:
         instance = self.function.instantiate(self.environment.module, arguments, location)
@@ -703,34 +705,41 @@ class SemanticProperty(SemanticSymbol):
         return str(self.property)
 
 
-class SemanticVisitor(Generic[R], abc.ABC):
-    def visit(self, symbol: SemanticSymbol) -> R:
-        if isinstance(symbol, SemanticType):
-            return self.visit_type(symbol)
-        elif isinstance(symbol, SemanticFunction):
-            return self.visit_function(symbol)
-        elif isinstance(symbol, SemanticValue):
-            return self.visit_value(symbol)
-        elif isinstance(symbol, SemanticModule):
-            return self.visit_module(symbol)
+class SemanticAttribute(SemanticSymbol):
+    def __init__(self, environment: SemanticEnvironment, attribute: Attribute):
+        super().__init__(environment)
 
-        raise DiagnosticError(symbol.location, f"Not implemented visitor for {type(symbol).__name__}")
+        self.__attribute = attribute
 
-    @abc.abstractmethod
-    def visit_symbol(self, symbol: SemanticSymbol) -> R:
-        raise NotImplementedError
+    @property
+    def attribute(self) -> Attribute:
+        return self.__attribute
 
-    def visit_module(self, symbol: SemanticModule) -> R:
-        return self.visit_symbol(symbol)
+    @property
+    def name(self) -> str:
+        return self.attribute.name
 
-    def visit_value(self, symbol: SemanticValue) -> R:
-        return self.visit_symbol(symbol)
+    @property
+    def location(self) -> Location:
+        return self.attribute.location
 
-    def visit_type(self, symbol: SemanticType) -> R:
-        return self.visit_type(symbol)
+    def as_symbol(self, location: Location) -> Symbol:
+        return self.attribute
 
-    def visit_function(self, symbol: SemanticFunction) -> R:
-        return self.visit_symbol(symbol)
+    def as_type(self, location: Location) -> Type:
+        self.diagnostics.error(location, f"Can not use decorator ‘{self.name}’ as type")
+        return ErrorType(self.environment.module, location)
+
+    def as_value(self, location: Location) -> Value:
+        self.diagnostics.error(location, f"Can not use decorator ‘{self.name}’ as type")
+        return ErrorValue(self.environment.module, location)
+
+    def instantiate(self, arguments: Sequence[Type], location: Location) -> SemanticError:
+        self.diagnostics.error(location, f"Can not instantiate decorator ‘{self.attribute.name}’")
+        return SemanticError(self.environment, location)
+
+    def __str__(self) -> str:
+        return str(self.attribute)
 
 
 class SemanticMixin(abc.ABC):
@@ -900,6 +909,10 @@ class SymbolAnnotator(SemanticMixin, NodeVisitor[Optional[Symbol]]):
         self.diagnostics.error("Not implemented type inference")
         return ErrorType(self.module, node.location)
 
+    def visit_decorator(self, node: DecoratorNode) -> R:
+        arguments = cast(Sequence[Value], [self.as_value(arg) for arg in node.arguments])
+        return Attribute(self.module, node.name, arguments, node.location)
+
 
 class SymbolInitializer(SemanticMixin, NodeVisitor[None]):
     queue: Deque[SyntaxNode]  # Queue with not annotated or initialized nodes
@@ -956,8 +969,9 @@ class SymbolInitializer(SemanticMixin, NodeVisitor[None]):
 
     def annotate_decorators(self, symbol: SemanticSymbol, decorators: Sequence[DecoratorNode]):
         # insert attributes
-        for attr in [self.model.symbols[decorator] for decorator in decorators]:
-            symbol.add_attribute(cast(Attribute, attr))
+        for decorator in decorators:
+            attr = self.model.symbols[decorator]
+            symbol.add_attribute(attr.as_symbol(decorator.location))
 
     def annotate_parents(self, symbol: SemanticType, parents: Sequence[TypeNode]):
         for node in parents:
@@ -1014,8 +1028,8 @@ class ParentMemberAnnotator(SemanticMixin, MemberVisitor[Optional[Symbol]]):
         return self.environment.diagnostics
 
     def visit_member(self, node: MemberNode):
-        self.diagnostics.error(node.location,
-                               f"Not implemented emitting symbols for statement: {type(node).__name__}")
+        message = f"Not implemented member emitting: {type(node).__name__}"
+        self.diagnostics.error(node.location, message)
 
     def visit_pass_member(self, node: PassMemberNode):
         pass
@@ -1449,8 +1463,8 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         return self.visit(node)
 
     def visit_statement(self, node: StatementNode):
-        self.diagnostics.error(node.location,
-                               f"Not implemented emitting symbols for statement: {type(node).__name__}")
+        message = f"Not implemented statement emitting: {type(node).__name__}"
+        self.diagnostics.error(node.location, message)
 
     def visit_block_statement(self, node: BlockStatementNode):
         for statement in node.statements:
@@ -1463,6 +1477,9 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         value = self.emit_expression(node.value) if node.value else None
         value = value or NoneConstant(self.symbol_context, node.location)
         self.environment.emit_return(value, value.location)
+
+    def visit_expression_statement(self, node: ExpressionStatementNode):
+        self.emit_expression(node.value)
 
     def visit_condition_statement(self, node: ConditionStatementNode):
         condition = self.emit_expression(node.condition)

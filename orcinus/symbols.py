@@ -443,6 +443,7 @@ class Type(GenericSymbol, Container, abc.ABC):
         self.__generic_parameters.append(generic)
 
     def add_attribute(self, attr: Attribute):
+        assert isinstance(attr, Attribute)
         self.__attributes.append(attr)
 
     def build(self):
@@ -866,7 +867,7 @@ class Function(GenericSymbol, Value):
     @cached_property
     def mangled_name(self) -> str:
         if self.is_native:
-            return self.native_name
+            return self.native_name or self.name
 
         builder = NameManglingBuilder()
         return builder.mangle(self)
@@ -899,6 +900,7 @@ class Function(GenericSymbol, Value):
         self.__generic_parameters.append(generic)
 
     def add_attribute(self, attr: Attribute):
+        assert isinstance(attr, Attribute)
         self.__attributes.append(attr)
 
     def append_basic_block(self, name: str) -> BasicBlock:

@@ -1,3 +1,5 @@
-# Main entry
-def main(args: Array[str]) -> int:
-    return args.__len__()
+from system import exit
+
+
+def main():
+    exit(1)

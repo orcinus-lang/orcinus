@@ -1,0 +1,4 @@
+
+
+@native
+def exit(status: int): ...
