@@ -853,6 +853,10 @@ class Function(GenericSymbol, Value):
         return not bool(self.blocks)
 
     @cached_property
+    def is_noreturn(self) -> bool:
+        return any(attr.name == 'native' for attr in self.attributes)
+
+    @cached_property
     def is_native(self) -> bool:
         return any(attr.name == 'native' for attr in self.attributes)
 
@@ -1095,7 +1099,7 @@ class BasicBlock:
         return self.__instructions
 
     @property
-    def terminator(self) -> Optional[TerminatorInstruction]:
+    def terminator(self) -> Optional[Instruction]:
         if not self.instructions:
             return None
 
@@ -1117,7 +1121,7 @@ class BasicBlock:
         self.__inject(inst)
 
     def insert(self, idx: int, inst: Instruction):
-        if self.is_terminated and isinstance(inst, TerminatorInstruction) and idx == len(self.instructions):
+        if self.is_terminated and inst.is_terminator and idx == len(self.instructions):
             raise RuntimeError(u'Can not insert terminator instruction to terminated block')
 
         elif inst.parent:
@@ -1211,13 +1215,7 @@ class Instruction(Value, abc.ABC):
         return self.as_inst()
 
 
-class TerminatorInstruction(Instruction, abc.ABC):
-    @property
-    def is_terminator(self) -> bool:
-        return True
-
-
-class ReturnInstruction(TerminatorInstruction):
+class ReturnInstruction(Instruction):
     def __init__(self, value: Value, *, location: Location):
         super(ReturnInstruction, self).__init__(value.context.void_type, location=location)
 
@@ -1225,13 +1223,17 @@ class ReturnInstruction(TerminatorInstruction):
 
         self.value = value
 
+    @property
+    def is_terminator(self) -> bool:
+        return True
+
     def as_inst(self) -> str:
         if isinstance(self.value, NoneConstant):
             return 'ret'
         return 'ret {}'.format(self.value.as_val())
 
 
-class BranchInstruction(TerminatorInstruction):
+class BranchInstruction(Instruction):
     def __init__(self, condition: Optional[Value], then_block: BasicBlock, else_block: Optional[BasicBlock], *,
                  location: Location):
         context = then_block.context
@@ -1244,6 +1246,10 @@ class BranchInstruction(TerminatorInstruction):
         self.condition = condition
         self.then_block = then_block
         self.else_block = else_block
+
+    @property
+    def is_terminator(self) -> bool:
+        return True
 
     @cached_property
     def successors(self) -> Set[BasicBlock]:
@@ -1297,6 +1303,10 @@ class CallInstruction(Instruction):
 
         self.function = func
         self.arguments = arguments
+
+    @property
+    def is_terminator(self) -> bool:
+        return self.function.is_noreturn
 
     def as_inst(self) -> str:
         arguments = ', '.join(arg.as_val() for arg in self.arguments)

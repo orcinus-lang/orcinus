@@ -1,0 +1,7 @@
+# ERROR: Unreachable code
+from system import exit
+
+
+def main() -> int:
+    exit(0)
+    return 0

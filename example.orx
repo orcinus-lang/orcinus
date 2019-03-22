@@ -3,3 +3,4 @@ from system import exit
 
 def main():
     exit(1)
+    return 1

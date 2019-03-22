@@ -80,13 +80,20 @@ class ModuleEmitter:
 
         is_main = func.name == 'main'
 
+        # declare function
         llvm_arguments = [self.llvm_types[param.type] for param in func.parameters]
         llvm_returns = self.llvm_types[func.return_type]
         llvm_type = ir.FunctionType(llvm_returns, llvm_arguments)
         llvm_func = ir.Function(self.llvm_module, llvm_type, func.name if is_main else func.mangled_name)
+
+        # parameters name
         for param, arg in zip(func.parameters, llvm_func.args):
             arg.name = param.name
+
+        # function attributes
         llvm_func.linkage = 'external' if func.is_abstract or is_main else 'internal'
+        if func.is_noreturn:
+            llvm_func.attributes.add('noreturn')
 
         return llvm_func
 
@@ -169,6 +176,8 @@ class FunctionEmitter:
 
             for inst in block.instructions:
                 self.emit_instruction(inst)
+                if inst.is_terminator and not self.llvm_builder.block.is_terminated:
+                    self.llvm_builder.unreachable()
 
     def get_value(self, value: Value) -> ir.Value:
         if isinstance(value, IntegerConstant):
