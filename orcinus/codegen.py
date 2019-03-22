@@ -72,7 +72,7 @@ class ModuleEmitter:
 
     def declare_function(self, func: Function) -> ir.Function:
         if func.is_generic:
-            raise RuntimeError(u"Can not convert generic function to LLVM")
+            raise DiagnosticError(func.location, f'Conversion to LLVM for generic function is not allowed')
 
         llvm_arguments = [self.llvm_types[param.type] for param in func.parameters]
         llvm_returns = self.llvm_types[func.return_type]
@@ -85,6 +85,9 @@ class ModuleEmitter:
         return llvm_func
 
     def declare_type(self, symbol: Type) -> ir.Type:
+        if symbol.is_generic:
+            raise DiagnosticError(symbol.location, f'Conversion to LLVM for generic type is not allowed')
+
         if isinstance(symbol, BooleanType):
             return ir.IntType(1)
         elif isinstance(symbol, IntegerType):
@@ -94,7 +97,7 @@ class ModuleEmitter:
         elif isinstance(symbol, VoidType):
             return ir.LiteralStructType([])
         elif isinstance(symbol, ClassType):
-            return self.llvm_context.get_identified_type(symbol.name).as_pointer()
+            return self.llvm_context.get_identified_type(str(symbol)).as_pointer()
 
         raise DiagnosticError(symbol.location, f'Conversion to LLVM is not implemented: {type(symbol).__name__}')
 

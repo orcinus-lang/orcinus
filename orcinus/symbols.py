@@ -462,15 +462,17 @@ class Type(GenericSymbol, Container, abc.ABC):
         raise RuntimeError('Can not instantiate non generic type')
 
     def instantiate(self, module: Module, generic_arguments: Sequence[Type], location: Location) -> Type:
-        # self instantiate
-        if all(param is arg for param, arg in zip(self.generic_parameters, generic_arguments)):
+        if len(self.generic_parameters) != len(generic_arguments):
+            self.context.diagnostics.error(location, 'Can not instantiate type: mismatch count of arguments')
             return self
 
         if not self.generic_parameters:
-            raise RuntimeError('Can not instantiate non generic type')
+            self.context.diagnostics.error(location, 'Can not instantiate type: type is not generic')
+            return self
 
-        if len(self.generic_parameters) != len(generic_arguments):
-            raise RuntimeError('Can not instantiate generic type')
+        # self instantiate
+        if all(param is arg for param, arg in zip(self.generic_parameters, generic_arguments)):
+            return self
 
         instance = self.instantiate_type(module)
         setattr(instance, '_Type__definition', self)

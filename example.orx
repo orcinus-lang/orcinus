@@ -1,5 +1,19 @@
-# ERROR: Circular dependency
+## Length interface for receive length of items in object
+#interface Length[T]:
+#    def __len__(self) -> int: ...
 
 
-class A(A):
-    pass
+# Array - stored arbitrary count of items
+class Array[T]:
+    def __len__(self) -> int: ...
+    def __getitem__(self, idx: int) -> T: ...
+    def __setitem__(self, idx: int, item: T): ...
+
+
+## Returns length of items in object
+#def len[T](object: T) -> int:
+#    return object.__len__()
+
+# Main entry
+def main(args: Array[str]) -> int:
+    return args.__len__()

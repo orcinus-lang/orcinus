@@ -285,6 +285,28 @@ class SemanticEnvironment(abc.ABC):
             return semantic_symbol.as_value(node.location)
         return ErrorValue(self.module, location=node.location)
 
+    def search_named_symbol(self, name: str, location: Location) -> Optional[SemanticSymbol]:
+        if name == TYPE_VOID_NAME:
+            result = self.symbol_context.void_type
+        elif name == TYPE_BOOLEAN_NAME:
+            result = self.symbol_context.boolean_type
+        elif name == TYPE_INTEGER_NAME:
+            result = self.symbol_context.integer_type
+        elif name == TYPE_STRING_NAME:
+            result = self.symbol_context.string_type
+        elif name == TYPE_FLOAT_NAME:
+            result = self.symbol_context.float_type
+        elif name == VALUE_TRUE_NAME:
+            result = BooleanConstant(self.symbol_context, True, location=location)
+        elif name == VALUE_FALSE_NAME:
+            result = BooleanConstant(self.symbol_context, False, location=location)
+        elif name == VALUE_NONE_NAME:
+            result = NoneConstant(self.symbol_context, location=location)
+        else:
+            return self.resolve(name)
+
+        return SemanticSymbol.from_symbol(self, result)
+
 
 class GlobalEnvironment(SemanticEnvironment):
     """ This environment is used for manage symbols of module """
@@ -405,11 +427,41 @@ class SemanticSymbol(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def instantiate(self, arguments: Sequence[Type], location: Location) -> SemanticSymbol:
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def __str__(self) -> str:
         raise NotImplementedError
 
     def __repr__(self):
         return f'<{type(self).__name__}: {self}>'
+
+
+class SemanticError(SemanticSymbol):
+    def __init__(self, environment: SemanticEnvironment, location: Location):
+        super().__init__(environment)
+
+        self.__location = location
+
+    @property
+    def location(self) -> Location:
+        return self.__location
+
+    def as_symbol(self, location: Location) -> Symbol:
+        return ErrorSymbol(self.model.module, self.location)
+
+    def as_type(self, location: Location) -> Type:
+        return ErrorType(self.model.module, self.location)
+
+    def as_value(self, location: Location) -> Value:
+        return ErrorValue(self.model.module, self.location)
+
+    def instantiate(self, arguments: Sequence[Type], location: Location) -> SemanticSymbol:
+        return self
+
+    def __str__(self) -> str:
+        return '<error>'
 
 
 class SemanticModule(SemanticSymbol):
@@ -421,6 +473,10 @@ class SemanticModule(SemanticSymbol):
     @property
     def module(self) -> Module:
         return self.__module
+
+    @property
+    def name(self) -> str:
+        return self.module.name
 
     @property
     def location(self) -> Location:
@@ -437,6 +493,10 @@ class SemanticModule(SemanticSymbol):
         self.diagnostics.error(location, f"Can not use model ‘{self.module.name}’ as value")
         return ErrorValue(self.environment.module, location)
 
+    def instantiate(self, arguments: Sequence[Type], location: Location) -> SemanticError:
+        self.diagnostics.error(location, f"Can not instantiate module ‘{self.module.name}’")
+        return SemanticError(self.environment, location)
+
     def add_member(self, symbol: SemanticSymbol):
         member: Child = symbol.as_symbol(symbol.location)
         self.module.add_member(member)
@@ -447,14 +507,18 @@ class SemanticModule(SemanticSymbol):
 
 
 class SemanticType(SemanticSymbol):
-    def __init__(self, environment: SemanticEnvironment, type: Type):
+    def __init__(self, environment: SemanticEnvironment, symbol: Type):
         super().__init__(environment)
 
-        self.__type = type
+        self.__type = symbol
 
     @property
     def type(self) -> Type:
         return self.__type
+
+    @property
+    def name(self) -> str:
+        return self.type.name
 
     @property
     def location(self) -> Location:
@@ -485,6 +549,10 @@ class SemanticType(SemanticSymbol):
     def build(self):
         return self.type.build()
 
+    def instantiate(self, arguments: Sequence[Type], location: Location) -> SemanticType:
+        instance = self.type.instantiate(self.environment.module, arguments, location)
+        return SemanticType(self.environment, instance)
+
     def __str__(self) -> str:
         return str(self.type)
 
@@ -498,6 +566,10 @@ class SemanticFunction(SemanticSymbol):
     @property
     def function(self) -> Function:
         return self.__function
+
+    @property
+    def name(self) -> str:
+        return self.field.name
 
     @property
     def location(self) -> Location:
@@ -524,6 +596,10 @@ class SemanticFunction(SemanticSymbol):
 
     def add_attribute(self, attribute: Attribute):
         self.type.add_attribute(attribute)
+
+    def instantiate(self, arguments: Sequence[Type], location: Location) -> SemanticFunction:
+        instance = self.function.instantiate(self.environment.module, arguments, location)
+        return SemanticFunction(self.environment, instance)
 
     def __str__(self) -> str:
         return str(self.function)
@@ -563,6 +639,10 @@ class SemanticValue(SemanticSymbol):
     def as_value(self, location: Location) -> Value:
         return self.value
 
+    def instantiate(self, arguments: Sequence[Type], location: Location) -> SemanticError:
+        self.diagnostics.error(location, f"Can not instantiate value")
+        return SemanticError(self.environment, location)
+
     def __str__(self) -> str:
         return str(self.value)
 
@@ -597,8 +677,12 @@ class SemanticField(SemanticSymbol):
         return ErrorType(self.environment.module, location)
 
     def as_value(self, location: Location) -> Value:
-        self.diagnostics.error(location, f"Can not use field ‘{self.name}’ as type")
+        self.diagnostics.error(location, f"Can not use field ‘{self.name}’ as value")
         return ErrorValue(self.environment.module, location)
+
+    def instantiate(self, arguments: Sequence[Type], location: Location) -> SemanticError:
+        self.diagnostics.error(location, f"Can not instantiate field ‘{self.field.name}’")
+        return SemanticError(self.environment, location)
 
     def __str__(self) -> str:
         return str(self.field)
@@ -607,10 +691,10 @@ class SemanticField(SemanticSymbol):
 class SemanticProperty(SemanticSymbol):
     py_property = property
 
-    def __init__(self, environment: SemanticEnvironment, property: Property):
+    def __init__(self, environment: SemanticEnvironment, symbol: Property):
         super().__init__(environment)
 
-        self.__property = property
+        self.__property = symbol
 
     @property
     def property(self) -> Property:
@@ -640,6 +724,10 @@ class SemanticProperty(SemanticSymbol):
     def as_value(self, location: Location) -> Value:
         self.diagnostics.error(location, f"Can not use property ‘{self.name}’ as type")
         return ErrorValue(self.environment.module, location)
+
+    def instantiate(self, arguments: Sequence[Type], location: Location) -> SemanticError:
+        self.diagnostics.error(location, f"Can not instantiate property ‘{self.property.name}’")
+        return SemanticError(self.environment, location)
 
     def __str__(self) -> str:
         return str(self.property)
@@ -717,28 +805,6 @@ class SemanticMixin(abc.ABC):
         """ Convert node to value """
         return self.environment.as_value(node)
 
-    def search_named_symbol(self, name: str, location: Location) -> Optional[SemanticSymbol]:
-        if name == TYPE_VOID_NAME:
-            result = self.symbol_context.void_type
-        elif name == TYPE_BOOLEAN_NAME:
-            result = self.symbol_context.boolean_type
-        elif name == TYPE_INTEGER_NAME:
-            result = self.symbol_context.integer_type
-        elif name == TYPE_STRING_NAME:
-            result = self.symbol_context.string_type
-        elif name == TYPE_FLOAT_NAME:
-            result = self.symbol_context.float_type
-        elif name == VALUE_TRUE_NAME:
-            result = BooleanConstant(self.symbol_context, True, location=location)
-        elif name == VALUE_FALSE_NAME:
-            result = BooleanConstant(self.symbol_context, False, location=location)
-        elif name == VALUE_NONE_NAME:
-            result = NoneConstant(self.symbol_context, location=location)
-        else:
-            return self.environment.resolve(name)
-
-        return SemanticSymbol.from_symbol(self.environment, result)
-
 
 class EnvironmentAnnotator(SemanticMixin, NodeVisitor[SemanticEnvironment]):
     def __call__(self, node: SyntaxNode) -> SemanticEnvironment:
@@ -777,7 +843,8 @@ class SymbolAnnotator(SemanticMixin, NodeVisitor[Optional[Symbol]]):
         assert not symbol or isinstance(symbol, SemanticSymbol)
         return symbol
 
-    def visit_node(self, _: SyntaxNode):
+    @staticmethod
+    def visit_node(_: SyntaxNode):
         return None
 
     def visit_tree(self, node: SyntaxTree) -> Module:
@@ -803,14 +870,19 @@ class SymbolAnnotator(SemanticMixin, NodeVisitor[Optional[Symbol]]):
         raise DiagnosticError(node.location, u'Not implemented annotation of member')
 
     def visit_generic_parameter(self, node: GenericParameterNode) -> Symbol:
-        parent = self.as_symbol(node.parent)
+        parent: Container = self.as_symbol(node.parent)
         return GenericType(parent, node.name, node.location)
 
-    def visit_named_type(self, node: NamedTypeNode) -> Optional[Symbol]:
-        return self.search_named_symbol(node.name, node.location)
+    def visit_named_type(self, node: NamedTypeNode) -> SemanticSymbol:
+        symbol = self.model.environments[node].search_named_symbol(node.name, node.location)
+        if not symbol:
+            self.diagnostics.error(node.location, f"Not found ‘{node.name}’ in current scope")
+            return SemanticError(self, node.location)
+        return symbol
 
-    def visit_parameterized_type(self, node: ParameterizedTypeNode) -> R:
-        return super().visit_parameterized_type(node)
+    def visit_parameterized_type(self, node: ParameterizedTypeNode) -> SemanticSymbol:
+        symbol: SemanticSymbol = self.visit(node.type)
+        return symbol.instantiate([self.visit(arg) for arg in node.arguments], node.location)
 
     def visit_auto_type(self, node: AutoTypeNode) -> R:
         self.diagnostics.error("Not implemented type inference")
@@ -865,11 +937,16 @@ class SymbolInitializer(SemanticMixin, NodeVisitor[None]):
             else:
                 symbol.type.add_parent(parent)
 
-    def annotate_generic_parameters(self, symbol: SemanticType, generic_parameters: Sequence[TypeNode]):
+    def annotate_generic_parameters(self, symbol: SemanticSymbol, generic_parameters: Sequence[TypeNode]):
+        generic_symbol: GenericSymbol = symbol.as_symbol(symbol.location)
+        assert isinstance(generic_symbol, GenericSymbol)
+
         for node in generic_parameters:
-            semantic_param = self.model.symbols[node]
-            symbol.environment.define(semantic_param.symbol.name, semantic_param)
-            cast(GenericSymbol, semantic_param.symbol).add_generic_parameter(semantic_param.as_type(node.location))
+            semantic_param: SemanticType = self.model.symbols[node]
+            generic_param: GenericType = semantic_param.as_type(node.location)
+
+            symbol.environment.define(semantic_param.name, semantic_param)
+            generic_symbol.add_generic_parameter(generic_param)
 
     def visit_node(self, node: SyntaxNode):
         pass
@@ -892,123 +969,6 @@ class SymbolInitializer(SemanticMixin, NodeVisitor[None]):
         self.add_decorators(function, node.decorators)
 
 
-# class SemanticAnnotator(SemanticMixin, abc.ABC):
-#     def __init__(self, model: SemanticModel, symbols: SemanticMapping = None):
-#         super(SemanticAnnotator, self).__init__(model)
-#
-#         self.__symbols = symbols
-#
-#     @property
-#     def symbols(self) -> SemanticMapping:
-#         return self.__symbols if self.__symbols is not None else self.model.symbols
-#
-#     def annotate(self, node: SyntaxNode) -> Optional[SemanticSymbol]:
-#         return self.model.symbols[node]
-#
-#     def search_named_symbol(self, name: str, location: Location) -> Optional[Symbol]:
-#         if name == TYPE_VOID_NAME:
-#             return self.symbol_context.void_type
-#         elif name == TYPE_BOOLEAN_NAME:
-#             return self.symbol_context.boolean_type
-#         elif name == TYPE_INTEGER_NAME:
-#             return self.symbol_context.integer_type
-#         elif name == TYPE_STRING_NAME:
-#             return self.symbol_context.string_type
-#         elif name == TYPE_FLOAT_NAME:
-#             return self.symbol_context.float_type
-#         elif name == VALUE_TRUE_NAME:
-#             return BooleanConstant(self.symbol_context, True, location=location)
-#         elif name == VALUE_FALSE_NAME:
-#             return BooleanConstant(self.symbol_context, False, location=location)
-#         elif name == VALUE_NONE_NAME:
-#             return NoneConstant(self.symbol_context, location=location)
-#
-#         # resolve static symbol
-#         return self.environment.resolve(name)
-#
-#
-
-# class StaticAnnotator(SemanticAnnotator):
-#     @property
-#     def environment(self) -> SemanticEnvironment:
-#         return self.model.environment
-#
-#     def annotate(self, node: SyntaxNode) -> Optional[SemanticSymbol]:
-#         if isinstance(node, SyntaxTree):
-#             return self.annotate_tree(node)
-#         elif isinstance(node, TypeNode):
-#             return self.annotate_type(node)
-#         elif isinstance(node, MemberNode):
-#             return self.annotate_member(node)
-#         elif isinstance(node, ExpressionNode):
-#             return ExpressionAnnotator(self.model).visit(node)
-#         elif isinstance(node, OverloadNode):
-#             return self.annotate_overload(node)
-#         elif isinstance(node, DecoratorNode):
-#             return self.annotate_decorator(node)
-#
-#         self.diagnostics.error(node.location, 'Not implemented member')
-#         return None
-#
-#     def annotate_tree(self, node: SyntaxTree) -> Module:
-#         return Module(self.symbol_context, node.name, node.location)
-#
-#     def annotate_decorator(self, node: DecoratorNode) -> Attribute:
-#         arguments = cast(Sequence[Value], [self.as_value(arg) for arg in node.arguments])
-#         return Attribute(self.module, node.name, arguments, node.location)
-#
-#     def annotate_type(self, node: TypeNode) -> Symbol:
-#         if isinstance(node, NamedTypeNode):
-#             return self.annotate_named_type(node)
-#         elif isinstance(node, ParameterizedTypeNode):
-#             return self.annotate_parameterized_type(node)
-#         elif isinstance(node, GenericParameterNode):
-#             return self.annotate_generic_type(node)
-#
-#         self.diagnostics.error(node.location, 'Not implemented type')
-#         return ErrorType(self.module, location=node.location)
-#
-#     def annotate_generic_type(self, node: GenericParameterNode) -> Type:
-#         return GenericType(self.model.module, node.name, node.location)
-#
-#     def annotate_named_type(self, node: NamedTypeNode) -> Symbol:
-#         symbol = self.search_named_symbol(node.name, node.location)
-#         if not symbol:
-#             self.diagnostics.error(node.location, f'Type ‘{node.name}’ not found in current scope')
-#             return ErrorType(self.module, node.location)
-#         return symbol
-#
-#     def annotate_parameterized_type(self, node: ParameterizedTypeNode) -> Symbol:
-#         generic = self.symbols[node.type]
-#         arguments = [self.symbols[arg] for arg in node.arguments]
-#         return generic.subscript(arguments, node.location)
-#
-#     def annotate_member(self, node: MemberNode) -> Optional[Symbol]:
-#         parent: Symbol = self.symbols[node.parent]
-#         if node in self.symbols:
-#             return self.symbols[node]
-#
-#         if isinstance(parent, Module):
-#             return ModuleMemberAnnotator(self.model, parent).annotate(node)
-#         elif isinstance(parent, ClassType):
-#             return ClassMemberAnnotator(self.model, parent).annotate(node)
-#         elif isinstance(parent, StructType):
-#             return StructMemberAnnotator(self.model, parent).annotate(node)
-#         elif isinstance(parent, InterfaceType):
-#             return InterfaceMemberAnnotator(self.model, parent).annotate(node)
-#         elif isinstance(parent, EnumType):
-#             return EnumMemberAnnotator(self.model, parent).annotate(node)
-#         elif isinstance(parent, Type):
-#             return TypeMemberAnnotator(self.model, parent).annotate(node)
-#
-#         self.diagnostics.error(parent.location, 'Not implemented parent')
-#         return None
-#
-#     def annotate_overload(self, node: OverloadNode) -> Overload:
-#         functions = [self.symbols[func] for func in node.functions]
-#         return Overload(self.module, node.name, cast(Sequence[Function], functions), location=node.location)
-#
-#
 class ParentMemberAnnotator(SemanticMixin, MemberVisitor[Optional[Symbol]]):
     def __init__(self, environment: SemanticEnvironment, parent: Container):
         super(ParentMemberAnnotator, self).__init__(environment)
@@ -1023,7 +983,8 @@ class ParentMemberAnnotator(SemanticMixin, MemberVisitor[Optional[Symbol]]):
         return self.environment.diagnostics
 
     def visit_member(self, node: MemberNode):
-        self.diagnostics.error(node.location, f"Not implemented emitting symbols for statement: {type(node).__name__}")
+        self.diagnostics.error(node.location,
+                               f"Not implemented emitting symbols for statement: {type(node).__name__}")
 
     def visit_pass_member(self, node: PassMemberNode):
         pass
@@ -1051,7 +1012,7 @@ class ParentMemberAnnotator(SemanticMixin, MemberVisitor[Optional[Symbol]]):
             func_param.name = node_param.name
             func_param.location = node_param.location
 
-            self.model.symbols[node_param] = func_param
+            self.model.symbols[node_param] = SemanticSymbol.from_symbol(self.environment, func_param)
 
         # assert node not in self.symbols
         return func
@@ -1120,7 +1081,8 @@ class TypeMemberAnnotator(ParentMemberAnnotator):
 
     def create_property_setter(self, node: FieldNode, _: Field = None) -> Function:
         prop_type = self.as_type(node.type)
-        setter_type = FunctionType(self.module, [self.parent, prop_type], self.symbol_context.void_type, node.location)
+        setter_type = FunctionType(self.module, [self.parent, prop_type], self.symbol_context.void_type,
+                                   node.location)
         setter_func = Function(self.parent, node.name, setter_type, node.location)
         setter_func.parameters[0].name = 'self'
         setter_func.parameters[1].name = 'value'
@@ -1172,11 +1134,11 @@ class EnumMemberAnnotator(TypeMemberAnnotator):
     def visit_enum_value(self, node: EnumValueNode) -> Optional[Symbol]:
         value = node.parent.members.index(node)
         if node.value:
-            expr = self.symbols[node.value]
-            if not isinstance(expr, IntegerConstant):
-                value = expr.property
-            else:
-                self.diagnostics.error(node.location, "Enumeration values must have integer value or ‘...’")
+            # expr = self.model.symbols[node.value]
+            # if not isinstance(expr, IntegerConstant):
+            #     value = expr.as_value()
+            # else:
+            self.diagnostics.error(node.location, "Enumeration values must have integer value or ‘...’")
 
         return EnumValue(self.parent, node.name, value, node.location)
 
@@ -1202,8 +1164,8 @@ class FunctionResolver(SemanticMixin):
         elif isinstance(symbol, SemanticOverload):
             self.candidates.extend(symbol.functions)
 
-    def add_type_functions(self, type: Type, name: str):
-        functions = (member for member in type.members if isinstance(member, Function) and member.name == name)
+    def add_type_functions(self, clazz: Type, name: str):
+        functions = (member for member in clazz.members if isinstance(member, Function) and member.name == name)
         self.candidates.extend(functions)
 
     def add_self_functions(self, name: str):
@@ -1454,7 +1416,8 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         return self.visit(node)
 
     def visit_statement(self, node: StatementNode):
-        self.diagnostics.error(node.location, f"Not implemented emitting symbols for statement: {type(node).__name__}")
+        self.diagnostics.error(node.location,
+                               f"Not implemented emitting symbols for statement: {type(node).__name__}")
 
     def visit_block_statement(self, node: BlockStatementNode):
         for statement in node.statements:
@@ -1617,7 +1580,7 @@ class ExpressionEmitter(FunctionMixin, ExpressionVisitor[Symbol]):
         return StringConstant(self.symbol_context, node.value, location=node.location)
 
     def visit_named_expression(self, node: NamedExpressionNode) -> Symbol:
-        symbol = self.search_named_symbol(node.name, node.location)
+        symbol = self.environment.search_named_symbol(node.name, node.location)
         if isinstance(symbol, SemanticValue):
             value = symbol.as_value(node.location)
             if isinstance(value, AllocaInstruction):
@@ -1659,7 +1622,8 @@ class ExpressionEmitter(FunctionMixin, ExpressionVisitor[Symbol]):
                 self.diagnostics.error(comparator.location, "Not implemented comparison operator")
                 return BooleanConstant(self.symbol_context, False, comparator.location)
 
-            function = FunctionResolver(self.environment, [left_argument, right_argument], location=comparator.location)
+            function = FunctionResolver(self.environment, [left_argument, right_argument],
+                                        location=comparator.location)
             function.add_self_functions(name)
             result = function.find_function()
             if not result:
@@ -1734,7 +1698,7 @@ class AssignmentEmitter(FunctionMixin, ExpressionVisitor[None]):
         self.diagnostics.error(node.location, 'Can not store value')
 
     def visit_named_expression(self, node: NamedExpressionNode):
-        symbol = self.search_named_symbol(node.name, node.location)
+        symbol = self.environment.search_named_symbol(node.name, node.location)
         variable = symbol.as_value(node.location)
 
         if isinstance(variable, AllocaInstruction):
@@ -1807,7 +1771,7 @@ class CallEmitter(FunctionMixin, ExpressionVisitor[Value]):
         return self.emit_named('__call__')
 
     def visit_named_expression(self, node: NamedExpressionNode):
-        symbol = self.search_named_symbol(node.name, node.location)
+        symbol = self.environment.search_named_symbol(node.name, node.location)
         if isinstance(symbol, SemanticType):
             return self.emit_constructor(symbol.as_type(node.location))
         return self.emit_named(node.name)
