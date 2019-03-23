@@ -43,9 +43,13 @@ void orx_processor_main(void* ptr) {
         }
     }
 
-    // Stop loop
+    // stop UV loop
     uv_stop(&processor->uv_loop);
     uv_run(&processor->uv_loop, UV_RUN_ONCE);
+
+    // :( it worked, but it smells..
+    fflush(stdout);
+    fflush(stderr);
     quick_exit((int) processor->exit_code);
 }
 

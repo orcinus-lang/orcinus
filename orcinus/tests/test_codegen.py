@@ -69,33 +69,12 @@ def execute(command, *, input=None, is_binary=False, is_error=False):
 
 
 def get_build_options():
-    # code, stdout, stderr = execute(['icu-config', '--ldflags', '--ldflags-icuio'])
-    # if code:
-    #     raise RuntimeError("Cannot select flags for ICU")
-    #
-    # library_path = None
-    items = [
+    return [
         "-load", os.path.join(os.getcwd(), './runtime/dist/lib/liborcinus-stdlib.so')
     ]
-    # for item in stdout.split(' '):
-    #     item = item.strip()
-    #     if not item:
-    #         continue
-    #
-    #     if item.startswith('-L'):
-    #         library_path = item[2:]
-    #     elif item.startswith('-l'):
-    #         name = item[2:]
-    #         if library_path:
-    #             filename = "{}.so".format(os.path.join(library_path, 'lib' + name))
-    #         else:
-    #             filename = "{}.so".format(os.path.join('lib' + name))
-    #         items.append("-load")
-    #         items.append(filename)
-    return items
 
 
-def compile_and_execute(capsys, trace_filename, *, name, opt_level, arguments, input=None, is_trace=True):
+def compile_and_execute(capsys, trace_filename, *, name, opt_level, arguments, input=None, is_trace=False):
     # orcinus - generate LLVM IR
     result_code = compile_module(trace_filename)
 
@@ -111,7 +90,6 @@ def compile_and_execute(capsys, trace_filename, *, name, opt_level, arguments, i
         f'-fake-argv0={name}'
     ]
     args.extend(get_build_options())
-    args.extend(['-'])
     args.extend(arguments)
 
     if is_trace:

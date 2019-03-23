@@ -1354,14 +1354,14 @@ class LocalEnvironment(SemanticEnvironment):
         function.add_scope_functions(name)
         return function.find_function()
 
-    def emit_error_call(self, name, arguments, keywords, *, location: Location):
+    def emit_error_call(self, name, arguments=None, keywords=None, *, location: Location):
         arguments = (f"{arg.type}" for arg in arguments) if arguments else ()
         keywords = (f"{key}: {arg.type}" for key, arg in keywords.items()) if keywords else ()
         arguments = '. '.join(itertools.chain(arguments, keywords))
         self.diagnostics.error(location, f"Not found function to call ‘{name}({arguments})’")
         return ErrorValue(self.module, location)
 
-    def emit_resolver_call(self, result, name, arguments, keywords, *, location: Location):
+    def emit_resolver_call(self, result, name, arguments=None, keywords=None, *, location: Location):
         if not result:
             return self.emit_error_call(name, arguments, keywords, location=location)
         function, arguments = result
@@ -1396,6 +1396,19 @@ class LocalEnvironment(SemanticEnvironment):
             self.diagnostics.error(location, message)
 
         self.builder.ret(value, location=location)
+
+    def emit_boolean(self, value: Value, location: Location):
+        boolean_type = self.symbol_context.boolean_type
+        if isinstance(value.type, BooleanType):
+            return value
+
+        result = self.search_named_call('__bool__', [value], location=location)
+        if result:
+            return self.emit_resolver_call(result, '__bool_', [value], location=location)
+
+        message = f"Logical value must be value of ‘{boolean_type}’ type, but got ‘{value.type}’"
+        self.diagnostics.error(location, message)
+        return ErrorValue(self.module, location)
 
     def emit_statement(self, node: StatementNode):
         emitter = StatementEmitter(self)
@@ -1483,6 +1496,9 @@ class FunctionMixin(SemanticMixin):
 
         return scope
 
+    def emit_boolean(self, value: Value, location: Location) -> Value:
+        return self.environment.emit_boolean(value, location)
+
     def emit_statement(self, node: StatementNode):
         return self.environment.emit_statement(node)
 
@@ -1521,6 +1537,8 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
 
     def visit_condition_statement(self, node: ConditionStatementNode):
         condition = self.emit_expression(node.condition)
+        condition = self.emit_boolean(condition, node.condition.location)
+
         begin_scope = self.environment.scope
         begin_block = self.builder.block
 
@@ -1580,6 +1598,8 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         self.builder.position_at_end(cond_block)
 
         condition = self.emit_expression(node.condition)
+        condition = self.emit_boolean(condition, node.condition.location)
+
         begin_scope = self.environment.scope
         begin_block = self.builder.block
 
@@ -1630,9 +1650,30 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         # merge scope
         self.merge({then_scope, else_scope}, node.location)
 
-    # def visit_with_statement(self, node: WithStatementNode):
-    #     for item in node.items:
-    #         self.emit_name
+    def visit_with_statement(self, node: WithStatementNode):
+        # Current implementation
+        #
+        # with <expression> [ as <target> ] :
+        #   <condition>
+        #
+        # $1 = <expression>
+        # $source = call __enter__ $1
+        # [ store <target> $source ]
+        # <condition> ...
+        # call __exit__ $1
+        contexts = []
+        for item in node.items:
+            context = self.emit_expression(item.expression)
+            contexts.append((context, item.expression.location))
+            source = self.environment.emit_named_call('__enter__', [context], location=item.expression.location)
+            if item.target:
+                emitter = AssignmentEmitter(self.environment, source, node.location)
+                emitter.visit(item.target)
+
+        self.emit_statement(node.statement)  # Can be unreachabled!
+
+        for context, location in reversed(contexts):
+            self.environment.emit_named_call('__exit__', [context], location=location)
 
     def visit_variable_statement(self, node: VariableStatementNode):
         # allocate register for variable
@@ -1774,21 +1815,21 @@ class AssignmentEmitter(FunctionMixin, ExpressionVisitor[None]):
         self.diagnostics.error(node.location, 'Can not store value')
 
     def visit_named_expression(self, node: NamedExpressionNode):
-        symbol = self.environment.search_named_symbol(node.name, node.location)
-        variable = symbol.as_value(node.location)
+        variable = self.environment.search_named_symbol(node.name, node.location)
 
-        if isinstance(variable, AllocaInstruction):
-            # store to variable
-            self.builder.store(variable, self.source, location=self.location)
-
-        elif not variable:
+        if not variable:
             # define new implicit variable
             with self.builder.goto_entry_block():
-                variable = self.builder.alloca(variable.type, name=node.name, location=node.location)
-            self.builder.store(variable, self.source, location=self.location)
-            self.environment.define(node.name, SemanticValue(self.environment, variable))
+                target = self.builder.alloca(self.source.type, name=node.name, location=node.location)
+            self.environment.define(node.name, SemanticValue(self.environment, target))
+        else:
+            target = variable.as_value(node.location)
 
-        elif not isinstance(variable, ErrorValue):
+        if isinstance(target, AllocaInstruction):
+            # store to variable
+            self.builder.store(target, self.source, location=self.location)
+
+        elif not isinstance(target, ErrorValue):
             self.diagnostics.error(self.location, 'Can not store value')
 
     def visit_attribute_expression(self, node: AttributeExpressionNode):
