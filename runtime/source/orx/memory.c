@@ -12,20 +12,25 @@
  *     Vasiliy Sheredeko.
  ******************************************************************************/
 #include <gc.h>
+#include <stdlib.h>
 #include "memory.h"
 
 void* orx_malloc(orx_size_t size) {
-    return GC_MALLOC(size);
+    //    return GC_MALLOC(size);
+    return malloc((size_t) size);
 }
 
 void* orx_malloc_atomic(orx_size_t size) {
-    return GC_MALLOC_ATOMIC(size);
+    //    return GC_MALLOC_ATOMIC(size);
+    return malloc((size_t) size);
 }
 
 void* orx_realloc(void* ptr, orx_size_t size) {
-    return GC_REALLOC(ptr, size);
+    //    return GC_REALLOC(ptr, size);
+    return realloc(ptr, (size_t) size);
 }
 
 void orx_free(void* ptr) {
-    GC_FREE(ptr);
+    //    GC_FREE(ptr);
+    free(ptr);
 }

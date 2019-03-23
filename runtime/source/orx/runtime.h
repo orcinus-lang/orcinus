@@ -20,3 +20,6 @@ void orx_start(orx_int64_t argc, const char** argv, orx_wire_func main_func);
 
 /// Exit entry
 void orx_exit(orx_int64_t code);
+
+/// Returns current processor
+orx_processor_t* orx_processor_current();

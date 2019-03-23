@@ -15,6 +15,8 @@
 
 #include "types.h"
 
+typedef struct uv_loop_s uv_loop_t;
+
 /// Create new processor
 orx_processor_t* orx_processor_create();
 
@@ -23,6 +25,12 @@ void orx_processor_exit(orx_processor_t* processor, orx_int64_t code);
 
 /// Returns true, if processor has not executed wires or not completed loop events
 bool orx_processor_is_executed(orx_processor_t* processor);
+
+/// Returns current wire
+orx_wire_t* orx_processor_current_wire(orx_processor_t* processor);
+
+/// Returns uv loop for processor
+uv_loop_t* orx_processor_loop(orx_processor_t* processor);
 
 /// Push wire to execution
 void orx_processor_push(orx_processor_t* processor, orx_wire_t* wire);

@@ -39,3 +39,9 @@ void* orx_malloc_atomic(orx_size_t size);
  * @return Pointer to reallocated buffer
  */
 void* orx_realloc(void* ptr, orx_size_t size);
+/**
+ * Free memory for buffer
+ *
+ * @param ptr   Old pointer to buffer
+ */
+void orx_free(void* ptr);

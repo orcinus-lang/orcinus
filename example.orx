@@ -8,25 +8,21 @@
 from system.io import print
 
 
-class TestManager:
-    a: int
+class FileIO:
+    @native('orx_file_open')
+    def __new__(path: str, mode: str) -> FileIO: ...
 
-    def __init__(self, a: int):
-        self.a = a
-
-    def __enter__(self) -> int:
-        print("call enter")
-        return self.a
+    def __enter__(self) -> FileIO:
+        return self
 
     def __exit__(self):
-        print("call exit")
+        self.close()
+
+    @native('orx_file_close')
+    def close(self):...
 
 
 def main() -> int:
-    print("before context")
-
-    with TestManager(15) as a:
-        print("middle context")
-
-    print("after context")
-    return a
+    with FileIO('/tmp/example.ll', 'r') as stream:
+        pass
+    return 0

@@ -34,8 +34,10 @@ void orx_processor_main(void* ptr) {
     orx_processor_t* processor = (orx_processor_t*) ptr;
     orx_wire_t*      wire      = NULL;
 
+    uv_loop_init(&processor->uv_loop);
+
     while (orx_processor_is_executed(processor)) {
-        uv_run(&processor->uv_loop, UV_RUN_ONCE);
+        uv_run(&processor->uv_loop, UV_RUN_NOWAIT);
 
         wire = orx_processor_pop(processor);
         if (wire) {
@@ -45,7 +47,6 @@ void orx_processor_main(void* ptr) {
 
     // stop UV loop
     uv_stop(&processor->uv_loop);
-    uv_run(&processor->uv_loop, UV_RUN_ONCE);
 
     // :( it worked, but it smells..
     fflush(stdout);
@@ -72,6 +73,14 @@ void orx_processor_exit(orx_processor_t* processor, orx_int64_t code) {
 
 bool orx_processor_is_executed(orx_processor_t* processor) {
     return processor->is_executed && (processor->wire_count > 0 || uv_loop_alive(&processor->uv_loop));
+}
+
+orx_wire_t* orx_processor_current_wire(orx_processor_t* processor) {
+    return processor->current_wire;
+}
+
+uv_loop_t* orx_processor_loop(orx_processor_t* processor) {
+    return &processor->uv_loop;
 }
 
 void orx_processor_push(orx_processor_t* processor, orx_wire_t* wire) {

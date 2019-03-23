@@ -20,8 +20,9 @@
 typedef int64_t orx_size_t;
 typedef int64_t orx_int64_t;
 typedef uint8_t orx_byte_t;
-
 typedef void (*orx_wire_func)(void*);
 
+typedef void*                  orx_type_t;
 typedef struct orx_wire_t      orx_wire_t;
 typedef struct orx_processor_t orx_processor_t;
+typedef struct orx_promise_t   orx_promise_t;

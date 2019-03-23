@@ -36,6 +36,9 @@ DIAGNOSTIC_LOGGERS = {
 }
 
 
+#
+
+
 def log_diagnostics(diagnostics: DiagnosticManager):
     for diagnostic in diagnostics:  # type: Diagnostic
         DIAGNOSTIC_LOGGERS.get(diagnostic.severity, logger.info)(diagnostic)

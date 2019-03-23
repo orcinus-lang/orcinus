@@ -2,11 +2,12 @@ ExternalProject_Add(
     libuv
     GIT_REPOSITORY "https://github.com/libuv/libuv.git"
     GIT_TAG "v1.27.0"
-    UPDATE_COMMAND ""
-    CONFIGURE_COMMAND <SOURCE_DIR>/autogen.sh                                   > ${ORX_CMAKE_DIR}/libuv-configure.log 2>&1
-                   && <SOURCE_DIR>/configure --with-pic --prefix=<INSTALL_DIR> >> ${ORX_CMAKE_DIR}/libuv-configure.log 2>&1
-    BUILD_COMMAND make > ${ORX_CMAKE_DIR}/libuv-build.log 2>&1
-    INSTALL_COMMAND make install > ${ORX_CMAKE_DIR}/libuv-install.log 2>&1
+#    UPDATE_COMMAND ""
+#    CONFIGURE_COMMAND <SOURCE_DIR>/autogen.sh                                   > ${ORX_CMAKE_DIR}/libuv-configure.log 2>&1
+#                   && <SOURCE_DIR>/configure --with-pic --prefix=<INSTALL_DIR> >> ${ORX_CMAKE_DIR}/libuv-configure.log 2>&1
+#    BUILD_COMMAND make > ${ORX_CMAKE_DIR}/libuv-build.log 2>&1
+#    INSTALL_COMMAND make install > ${ORX_CMAKE_DIR}/libuv-install.log 2>&1
+    CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR> -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
     INSTALL_DIR ${ORX_DIST_DIR}
     LOG_DOWNLOAD 0
     DOWNLOAD_NO_PROGRESS 1

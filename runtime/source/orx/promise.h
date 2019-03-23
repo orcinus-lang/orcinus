@@ -11,4 +11,23 @@
  *     strictly forbidden unless prior written permission is obtained from
  *     Vasiliy Sheredeko.
  ******************************************************************************/
-#include "stream.h"
+#pragma once
+
+#include <orx/types.h>
+
+typedef struct orx_result_t {
+    bool  is_error;
+    void* result;
+} orx_result_t;
+
+/// Create new promise
+orx_promise_t* orx_promise_create();
+
+/// Wait for promise result. E.g. current wire is transfer control to next scheduler wire.
+orx_result_t orx_promise_wait(orx_promise_t* promise);
+
+/// Set error to promise and resume execution of waited wire
+void orx_promise_set_error(orx_promise_t* promise, void* error);
+
+/// Set error to promise and resume execution of waited wire
+void orx_promise_set_result(orx_promise_t* promise, void* result);
