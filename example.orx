@@ -1,5 +1,5 @@
-from system import exit
-
-
+# EXIT: 0
 def main() -> int:
-    exit(1234)
+    if False:
+        return 1
+    return 0

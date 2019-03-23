@@ -44,13 +44,26 @@ class ModuleEmitter:
         return self.__llvm_functions
 
     @cached_property
+    def llvm_exit(self) -> ir.Function:
+        # TODO: Import from module `system`?
+
+        llvm_exit = self.get_runtime_function('orx_exit', ir.VoidType(), [ir.IntType(64)])
+        llvm_exit.attributes.add('noreturn')
+        return llvm_exit
+
+    @cached_property
     def llvm_malloc(self) -> ir.Function:
-        llvm_type = ir.FunctionType(ir.IntType(8).as_pointer(), [ir.IntType(64)])
-        return ir.Function(self.llvm_module, llvm_type, 'malloc')
+        return self.get_runtime_function('orx_malloc', ir.IntType(8).as_pointer(), [ir.IntType(64)])
 
     @cached_property
     def llvm_size(self) -> ir.Type:
         return ir.IntType(64)
+
+    @cached_property
+    def llvm_wire_func(self) -> ir.FunctionType:
+        # typedef void (*orx_wire_func)(void*);
+        llvm_void_ptr = ir.IntType(8).as_pointer()
+        return ir.FunctionType(ir.VoidType(), [llvm_void_ptr])
 
     @property
     def is_normalize(self) -> bool:
@@ -59,6 +72,13 @@ class ModuleEmitter:
     @is_normalize.setter
     def is_normalize(self, value: bool):
         self.__is_normalize = value
+
+    def get_runtime_function(self, name: str, llvm_returns: ir.Type, llvm_params: Sequence[ir.Type]) -> ir.Function:
+        try:
+            return self.llvm_module.get_global(name)
+        except KeyError:
+            llvm_type = ir.FunctionType(llvm_returns, llvm_params)
+            return ir.Function(self.llvm_module, llvm_type, name)
 
     def verify(self):
         try:
@@ -78,20 +98,18 @@ class ModuleEmitter:
         if func.is_generic:
             raise DiagnosticError(func.location, f'Conversion to LLVM for generic function is not allowed')
 
-        is_main = func.name == 'main'
-
         # declare function
         llvm_arguments = [self.llvm_types[param.type] for param in func.parameters]
         llvm_returns = self.llvm_types[func.return_type]
         llvm_type = ir.FunctionType(llvm_returns, llvm_arguments)
-        llvm_func = ir.Function(self.llvm_module, llvm_type, func.name if is_main else func.mangled_name)
+        llvm_func = ir.Function(self.llvm_module, llvm_type, func.mangled_name)
 
         # parameters name
         for param, arg in zip(func.parameters, llvm_func.args):
             arg.name = param.name
 
         # function attributes
-        llvm_func.linkage = 'external' if func.is_abstract or is_main else 'internal'
+        llvm_func.linkage = 'external' if func.is_abstract else 'internal'
         if func.is_noreturn:
             llvm_func.attributes.add('noreturn')
 
@@ -118,7 +136,7 @@ class ModuleEmitter:
             llvm_size = self.llvm_size
             llvm_element = self.llvm_types[symbol.element_type]
             llvm_array = llvm_element.as_pointer()
-            return ir.LiteralStructType([llvm_size, llvm_array])
+            return ir.LiteralStructType([llvm_size, llvm_array]).as_pointer()
 
         raise DiagnosticError(symbol.location, f'Conversion to LLVM is not implemented: {type(symbol).__name__}')
 
@@ -135,10 +153,58 @@ class ModuleEmitter:
         emitter = FunctionEmitter(self, func, self.llvm_functions[func])
         emitter.emit()
 
+    def emit_main(self, func: Function):
+        # Create full blow function for main
+        string_type = func.context.string_type
+        arguments_type = ArrayType(func.module, string_type, location=func.location)
+
+        # __orx_main prototype
+        llvm_main_type = ir.FunctionType(ir.VoidType(), [self.llvm_types[arguments_type]])
+        llvm_main = ir.Function(self.llvm_module, llvm_main_type, '__orx_main')
+        llvm_main.linkage = 'internal'
+
+        # __orx_main call
+        llvm_builder = ir.IRBuilder(llvm_main.append_basic_block('entry'))
+        if len(func.parameters) == 1:
+            llvm_result = llvm_builder.call(self.llvm_functions[func], [llvm_main.args[0]])
+        else:
+            llvm_result = llvm_builder.call(self.llvm_functions[func], [])
+
+        if isinstance(func.return_type, IntegerType):
+            llvm_builder.call(self.llvm_exit, [llvm_result])
+        llvm_builder.ret_void()
+
+        # orx_start prototype: `void orx_main(int64_t argc, const char** argv, orx_wire_func main_func)`
+        llvm_string_args = ir.IntType(8).as_pointer().as_pointer()
+        llvm_init_args = [self.llvm_size, llvm_string_args, self.llvm_wire_func.as_pointer()]
+        llvm_init = self.get_runtime_function('orx_start', ir.VoidType(), llvm_init_args)
+
+        # C main function
+        llvm_ctype = ir.FunctionType(ir.IntType(32), [ir.IntType(32), llvm_string_args])
+        llvm_cmain = ir.Function(self.llvm_module, llvm_ctype, name="main")
+
+        argc, argv = llvm_cmain.args
+        argc.name = 'argc'
+        argv.name = 'argv'
+
+        llvm_builder = ir.IRBuilder(llvm_cmain.append_basic_block('entry'))
+        llvm_builder.call(llvm_init, [
+            llvm_builder.sext(argc, self.llvm_size),
+            argv,
+            llvm_builder.bitcast(llvm_main, self.llvm_wire_func.as_pointer())
+        ])
+        llvm_builder.ret(ir.Constant(ir.IntType(32), 0))
+
     def emit(self, module: Module):
+        # emit declared functions
         for func in module.declared_functions:
             if not func.is_generic and not func.is_abstract:
                 self.emit_function(func)
+
+        # emit main function
+        main_func = module.get_member('main')
+        if isinstance(main_func, Function):
+            self.emit_main(main_func)
 
 
 class FunctionEmitter:
@@ -152,6 +218,10 @@ class FunctionEmitter:
         self.llvm_instructions = {}
         self.llvm_parameters = {}
         self.llvm_builder = None
+
+    @property
+    def llvm_module(self):
+        return self.parent.llvm_module
 
     @property
     def llvm_types(self):
@@ -186,6 +256,16 @@ class FunctionEmitter:
             return ir.Constant(self.llvm_types[value.type], value.value)
         elif isinstance(value, NoneConstant):
             return ir.Constant.literal_struct([])
+        elif isinstance(value, StringConstant):
+            constant = ir.Constant.literal_array(
+                [ir.Constant(ir.IntType(8), ord(c)) for c in value.value] +
+                [ir.Constant(ir.IntType(8), 0)]
+            )
+            global_v = ir.GlobalVariable(self.llvm_module, constant.type, self.llvm_module.get_unique_name("string"))
+            global_v.initializer = constant
+            return global_v.bitcast(ir.IntType(8).as_pointer())
+
+            # return ir.Constant.literal_struct([])
         elif isinstance(value, Parameter):
             return self.llvm_parameters[value]
         elif isinstance(value, Instruction):

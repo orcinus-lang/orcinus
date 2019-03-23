@@ -351,13 +351,10 @@ class Parser:
         # TODO: Capture whitespaces in token
         names = [self.consume(TokenID.Name)]
         while self.match(TokenID.Dot):
-            self.consume()
-            self.consume(TokenID.Name)
+            names.append(self.consume())
+            names.append(self.consume(TokenID.Name))
 
-        items = []
-        for t in names:
-            items.append(t.value)
-        name = '.'.join(items)
+        name = ''.join(t.value for t in names)
         location = names[0].location + names[-1].location
         return SyntaxToken(token_id=TokenID.Name, value=name, location=location)
 

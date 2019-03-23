@@ -486,7 +486,8 @@ class DecoratorNode(SyntaxNode):
     token_at: SyntaxToken
     token_name: SyntaxToken
     token_open: Optional[SyntaxToken]
-    arguments: SyntaxCollection[ArgumentNode]
+    arguments: SyntaxCollection[ExpressionNode]
+    keywords: SyntaxDictionary[str, ExpressionNode]
     token_close: Optional[SyntaxToken]
     token_newline: SyntaxToken
 
@@ -503,7 +504,12 @@ class DecoratorNode(SyntaxNode):
         self.token_at = token_at
         self.token_name = token_name
         self.token_open = token_open
-        self.arguments = arguments
+        self.__arguments = arguments
+        self.arguments = SyntaxCollection[ExpressionNode](
+            [arg.value for arg in arguments if isinstance(arg, PositionArgumentNode)])
+        self.keywords = SyntaxDictionary[str, ExpressionNode]({
+            arg.name: arg.value for arg in arguments if isinstance(arg, KeywordArgumentNode)
+        })
         self.token_close = token_close
         self.token_newline = token_newline
 
@@ -521,7 +527,7 @@ class DecoratorNode(SyntaxNode):
             self.token_at,
             self.token_name,
             self.token_open,
-            self.arguments,
+            self.__arguments,
             self.token_close,
             self.token_newline
         ])

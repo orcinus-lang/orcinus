@@ -8,6 +8,7 @@ import dataclasses
 import os
 import subprocess
 import sys
+import tempfile
 import warnings as pywarnings
 from typing import Optional, MutableSequence
 
@@ -18,7 +19,7 @@ from orcinus.tests import find_scripts
 
 OPT_EXECUTABLE = 'opt-6.0'
 LLI_EXECUTABLE = 'lli-6.0'
-BOOTSTRAP_SCRIPT = 'orcinus'
+STRACEC_EXECUTABLE = 'strace'
 
 TEST_FIXTURES = sorted(s for s in find_scripts('./tests/codegen'))
 
@@ -50,6 +51,7 @@ class ScriptOutput:
     result_code: int
     output: str
     error: str
+    trace: str
 
 
 def execute(command, *, input=None, is_binary=False, is_error=False):
@@ -70,10 +72,10 @@ def get_build_options():
     # code, stdout, stderr = execute(['icu-config', '--ldflags', '--ldflags-icuio'])
     # if code:
     #     raise RuntimeError("Cannot select flags for ICU")
-
-    library_path = None
+    #
+    # library_path = None
     items = [
-        # "-load", os.path.join(os.getcwd(), './dist/lib/libbootstrap-runtime.so')
+        "-load", os.path.join(os.getcwd(), './runtime/dist/lib/liborcinus-stdlib.so')
     ]
     # for item in stdout.split(' '):
     #     item = item.strip()
@@ -93,24 +95,44 @@ def get_build_options():
     return items
 
 
-def compile_and_execute(capsys, filename, *, name, opt_level, arguments, input=None):
+def compile_and_execute(capsys, trace_filename, *, name, opt_level, arguments, input=None, is_trace=True):
     # orcinus - generate LLVM IR
-    error_code = compile_module(filename)
+    result_code = compile_module(trace_filename)
 
     captured = capsys.readouterr()
-    if error_code:
-        return ScriptOutput(False, error_code, captured.out, captured.err)
+    if result_code:
+        return ScriptOutput(False, result_code, captured.out, captured.err, "")
 
     assembly = captured.out.encode('utf-8')
 
-    # lli-6.0 - compile LLVM IR and execute
-    flags = [
+    args = [
+        LLI_EXECUTABLE,
+        f'-O{opt_level}',
         f'-fake-argv0={name}'
     ]
-    flags.extend(get_build_options())
-    flags.extend(['-'])
-    flags.extend(arguments)
-    return ScriptOutput(True, *execute([LLI_EXECUTABLE, f'-O{opt_level}'] + flags, input=assembly))
+    args.extend(get_build_options())
+    args.extend(['-'])
+    args.extend(arguments)
+
+    if is_trace:
+        trace_filename = f'{tempfile.mktemp()}.strace'
+        args = [
+                   STRACEC_EXECUTABLE,
+                   # trace children threads
+                   '-f',
+                   # output trace to file
+                   f'-o', trace_filename,
+               ] + args
+    else:
+        trace_filename = None
+
+    stdtrace = ''
+    result_code, stdout, stderr = execute(args, input=assembly)
+    if is_trace:
+        with open(trace_filename, 'r', os.O_NONBLOCK) as stream:
+            print(stream.read(), file=sys.stderr)
+
+    return ScriptOutput(True, result_code, stdout, stderr, '')
 
 
 def remove_startswith_and_strip(haystack: str, needle: str) -> str:

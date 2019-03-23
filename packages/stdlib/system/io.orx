@@ -1,0 +1,10 @@
+
+
+#stderr: StreamIO
+#stdout: StreamIO
+
+
+# def print(value: str, sep: str = ' ', end: str = '\n', file=sys.stdout, flush=False): ...
+
+@native('orx_print')
+def print(value: str): ...

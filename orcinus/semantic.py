@@ -802,16 +802,9 @@ class EnvironmentAnnotator(SemanticMixin, NodeVisitor[SemanticEnvironment]):
 
 class ImportAnnotator(SemanticMixin, ImportVisitor[None]):
     def import_symbol(self, module: Module, name: str, alias: Optional[str] = None) -> bool:
-        # members = [member for member in module.members if member.name == name]
         member = module.get_member(name)
-
-        # if members and all(isinstance(member, Function) for member in members):
-        #     functions = cast(Sequence[Function], members)
-        #     member = Overload(module, alias or name, functions, members[0].location)
-        # elif len(members) != 1:
-        #     return False
-        # else:
-        #     member = members[0]
+        if not member:
+            return False
         self.environment.define(alias or name, SemanticSymbol.from_symbol(self.environment, member))
         return True
 
@@ -839,7 +832,7 @@ class ImportAnnotator(SemanticMixin, ImportVisitor[None]):
             # Load aliases from nodes
         for alias in node.aliases:
             if not self.import_symbol(module, alias.name, alias.alias):
-                self.diagnostics.error(node.location, f'Cannot import name ‘{alias.name}’ from ‘{module.name}’')
+                self.diagnostics.error(alias.location, f'Cannot import name ‘{alias.name}’ from ‘{module.name}’')
 
 
 class ScopeAnnotator(SemanticMixin, NodeVisitor[SemanticScope]):
@@ -905,13 +898,16 @@ class SymbolAnnotator(SemanticMixin, NodeVisitor[Optional[Symbol]]):
         symbol: SemanticSymbol = self.visit(node.type)
         return symbol.instantiate([self.as_type(arg) for arg in node.arguments], node.location)
 
-    def visit_auto_type(self, node: AutoTypeNode) -> R:
+    def visit_auto_type(self, node: AutoTypeNode) -> Symbol:
         self.diagnostics.error("Not implemented type inference")
         return ErrorType(self.module, node.location)
 
-    def visit_decorator(self, node: DecoratorNode) -> R:
+    def visit_decorator(self, node: DecoratorNode) -> Symbol:
         arguments = cast(Sequence[Value], [self.as_value(arg) for arg in node.arguments])
         return Attribute(self.module, node.name, arguments, node.location)
+
+    def visit_expression(self, node: ExpressionNode) -> Symbol:
+        return ConstantEmitter(self.environment).visit(node)
 
 
 class SymbolInitializer(SemanticMixin, NodeVisitor[None]):
@@ -1188,6 +1184,18 @@ class EnumMemberAnnotator(TypeMemberAnnotator):
             self.diagnostics.error(node.location, "Enumeration values must have integer value or ‘...’")
 
         return EnumValue(self.parent, node.name, value, node.location)
+
+
+class ConstantEmitter(SemanticMixin, ExpressionVisitor[Value]):
+    def visit_expression(self, node: ExpressionNode) -> Value:
+        self.diagnostics.error(node.location, "Required constant expression")
+        return ErrorValue(self.module, node.location)
+
+    def visit_integer_expression(self, node: IntegerExpressionNode) -> Value:
+        return IntegerConstant(self.symbol_context, int(node.value), location=node.location)
+
+    def visit_string_expression(self, node: StringExpressionNode) -> Value:
+        return StringConstant(self.symbol_context, node.value, location=node.location)
 
 
 class FunctionResolver(SemanticMixin):

@@ -1,5 +1,5 @@
 
 
-@native
+@native('orx_exit')
 @noreturn
 def exit(status: int): ...

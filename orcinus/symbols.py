@@ -854,7 +854,7 @@ class Function(GenericSymbol, Value):
 
     @cached_property
     def is_noreturn(self) -> bool:
-        return any(attr.name == 'native' for attr in self.attributes)
+        return any(attr.name == 'noreturn' for attr in self.attributes)
 
     @cached_property
     def is_native(self) -> bool:
