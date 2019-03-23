@@ -1,5 +1,6 @@
+# EXIT: 10
 from system import exit
 
 
 def main() -> int:
-    exit(1234)
+    exit(10)

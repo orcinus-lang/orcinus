@@ -1,0 +1,4 @@
+# EXIT: 12
+
+def main() -> int:
+    return 3 * 4
