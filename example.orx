@@ -1,5 +1,32 @@
-# EXIT: 0
-def main() -> int:
-    if False:
-        return 1
-    return 0
+# EXIT: 15
+# OUTPUT: before context
+# OUTPUT: call enter
+# OUTPUT: middle context
+# OUTPUT: call exit
+# OUTPUT: after context
+
+from system.io import print
+
+
+class TestManager:
+    a: int
+
+    def __init__(self, a: int):
+        self.a = a
+
+    def __enter__(self) -> int:
+        print("call enter")
+        return self.a
+
+    def __exit__(self):
+        print("call exit")
+
+
+def main():
+    print("before context")
+
+    with TestManager(15) as a:
+        print("middle context")
+
+    print("after context")
+    return a

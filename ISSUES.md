@@ -3,7 +3,9 @@ Exit with crash
 
 At call `orx_exit` runtime is failed to successfully exit.
 
-Error is incorrect use of complex libraries as `gc`, `coro` and `uv`.  
+Error is incorrect use of complex libraries as `gc`, `coro` and `uv`.
+
+Probably fixed by change `exit` to `quick_exit`.  
  
 Strace of error:
 

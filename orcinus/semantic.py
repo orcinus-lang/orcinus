@@ -1227,13 +1227,6 @@ class FunctionResolver(SemanticMixin):
         if self.arguments:
             self.add_type_functions(self.arguments[0].type, name)
 
-    def add_import_functions(self, name: str):
-        symbol = self.model.imports.get(name, None)
-        if isinstance(symbol, Function):
-            self.candidates.append(symbol)
-        elif isinstance(symbol, Overload):
-            self.candidates.extend(child for child in symbol.functions)
-
     def check_function(self, func: Function) -> Optional[Tuple[int, Function, Sequence[Value]]]:
         """
         Returns:
@@ -1354,6 +1347,43 @@ class LocalEnvironment(SemanticEnvironment):
 
     def resolve(self, name: str) -> Optional[Symbol]:
         return super().resolve(name) or self.parent.resolve(name)
+
+    def search_named_call(self, name, arguments=None, keywords=None, *, location):
+        function = FunctionResolver(self, arguments, keywords, location=location)
+        function.add_self_functions(name)
+        function.add_scope_functions(name)
+        return function.find_function()
+
+    def emit_error_call(self, name, arguments, keywords, *, location: Location):
+        arguments = (f"{arg.type}" for arg in arguments) if arguments else ()
+        keywords = (f"{key}: {arg.type}" for key, arg in keywords.items()) if keywords else ()
+        arguments = '. '.join(itertools.chain(arguments, keywords))
+        self.diagnostics.error(location, f"Not found function to call ‘{name}({arguments})’")
+        return ErrorValue(self.module, location)
+
+    def emit_resolver_call(self, result, name, arguments, keywords, *, location: Location):
+        if not result:
+            return self.emit_error_call(name, arguments, keywords, location=location)
+        function, arguments = result
+        return self.builder.call(function, arguments, location=location)
+
+    def emit_named_call(self,
+                        name: str,
+                        arguments: Sequence[Value] = None,
+                        keywords: Mapping[str, Value] = None,
+                        *, location: Location):
+        result = self.search_named_call(name, arguments, keywords, location=location)
+        return self.emit_resolver_call(result, name, arguments, keywords, location=location)
+
+    def emit_constructor_call(self,
+                              clazz: Type,
+                              arguments: Sequence[Value] = None,
+                              keywords: Mapping[str, Value] = None,
+                              *, location: Location):
+        resolver = FunctionResolver(self, arguments, keywords, location=location)
+        resolver.add_type_functions(clazz, NEW_NAME)
+        result = resolver.find_function()
+        return self.emit_resolver_call(result, str(clazz), arguments, keywords, location=location)
 
     def emit_return(self, value: Value, location: Location):
         return_type = self.function.return_type
@@ -1600,6 +1630,10 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         # merge scope
         self.merge({then_scope, else_scope}, node.location)
 
+    # def visit_with_statement(self, node: WithStatementNode):
+    #     for item in node.items:
+    #         self.emit_name
+
     def visit_variable_statement(self, node: VariableStatementNode):
         # allocate register for variable
         var_type = self.as_type(node.type)
@@ -1702,15 +1736,7 @@ class ExpressionEmitter(FunctionMixin, ExpressionVisitor[Symbol]):
             self.diagnostics.error(node.location, "Not implemented binary operator")
             return ErrorValue(self.module, node.location)
 
-        function = FunctionResolver(self.environment, [argument], location=node.location)
-        function.add_self_functions(name)
-        result = function.find_function()
-        if not result:
-            self.diagnostics.error(node.location, f"Not found method ‘{name}’")  # TODO: Normal message
-            return ErrorValue(self.module, node.location)
-        else:
-            function, arguments = result
-            return self.builder.call(function, arguments, location=node.location)
+        return self.environment.emit_named_call(name, [argument], location=node.location)
 
     def visit_binary_expression(self, node: BinaryExpressionNode) -> Symbol:
         left_argument = self.emit_expression(node.left_argument)
@@ -1721,15 +1747,7 @@ class ExpressionEmitter(FunctionMixin, ExpressionVisitor[Symbol]):
             self.diagnostics.error(node.location, "Not implemented binary operator")
             return ErrorValue(self.module, node.location)
 
-        function = FunctionResolver(self.environment, [left_argument, right_argument], location=node.location)
-        function.add_self_functions(name)
-        result = function.find_function()
-        if not result:
-            self.diagnostics.error(node.location, f"Not found method ‘{name}’")  # TODO: Normal message
-            return ErrorValue(self.module, node.location)
-        else:
-            function, arguments = result
-            return self.builder.call(function, arguments, location=node.location)
+        return self.environment.emit_named_call(name, [left_argument, right_argument], location=node.location)
 
     def visit_call_expression(self, node: CallExpressionNode) -> Symbol:
         arguments = [self.emit_expression(arg) for arg in node.arguments]
@@ -1800,29 +1818,10 @@ class CallEmitter(FunctionMixin, ExpressionVisitor[Value]):
         self.location = location
 
     def emit_named(self, name: str):
-        resolver = FunctionResolver(self.environment, self.arguments, self.keywords, location=self.location)
-        resolver.add_scope_functions(name)
-        resolver.add_self_functions(name)
-        result = resolver.find_function()
-
-        if not result:
-            self.diagnostics.error(self.location, f"Not found method ‘{name}’")  # TODO: Normal message
-            return ErrorValue(self.module, self.location)
-
-        function, arguments = result
-        return self.builder.call(function, arguments, location=self.location)
+        return self.environment.emit_named_call(name, self.arguments, self.keywords, location=self.location)
 
     def emit_constructor(self, clazz: Type):
-        resolver = FunctionResolver(self.environment, self.arguments, self.keywords, location=self.location)
-        resolver.add_type_functions(clazz, NEW_NAME)
-        result = resolver.find_function()
-
-        if not result:
-            self.diagnostics.error(self.location, f"Not found method ‘{NEW_NAME}’")  # TODO: Normal message
-            return ErrorValue(self.module, self.location)
-
-        function, arguments = result
-        return self.builder.call(function, arguments, location=self.location)
+        return self.environment.emit_constructor_call(clazz, self.arguments, self.keywords, location=self.location)
 
     def visit_expression(self, node: ExpressionNode):
         self.arguments.insert(0, self.emit_expression(node))
