@@ -77,99 +77,44 @@ def compile(filename):
     build_path = os.path.join(build_dir, f"{basename}.{OBJECT_EXTENSION}")
     os.makedirs(os.path.dirname(build_path), exist_ok=True)
 
-    assembly = execute(COMPILER, filename)
+    assembly = execute(COMPILER, 'compile', filename)
     execute(ASSEMBLER, '-filetype=obj', '-relocation-model=pic', f'-o={build_path}', input=assembly)
     return build_path
 
 
-def link_unix(filenames, libraries, output):
+def link(filenames, libraries, output):
     return execute(LINKER, *filenames, *libraries, "-fPIC", "-O0", "-g", "-ggdb", "-o", output)
 
 
-def link_windows(filenames, libraries, output):
-    print(' '.join(map(str, [LINKER, *filenames, '/OUT', output, '/VERBOSE'])))
-    return execute(LINKER, *filenames, '/OUT', output, '/VERBOSE')
-
-
-def link(filenames, libraries, output):
-    if os.name == 'nt':
-        return link_windows(filenames, libraries, output)
-    return link_unix(filenames, libraries, output)
-
-
 EXECUTABLE_PATHS = [
-    os.path.join(os.getcwd(), "./build/debug-gcc"),
-    os.path.join(os.getcwd(), "./build/release-gcc"),
-    os.path.join(os.getcwd(), "./build/debug-clang"),
-    os.path.join(os.getcwd(), "./build/release-clang"),
-
-    os.path.join(os.getcwd(), "./build/RelWithDebInfo"),
-    os.path.join(os.getcwd(), "./build/Release"),
-    os.path.join(os.getcwd(), "./build/Debug"),
-
-    os.path.join(os.getcwd(), "./dist/bin/"),
-
-    'C:/Development/LLVM64/bin',
-    'C:/LLVM/bin',
+    os.path.join(os.getcwd(), ".venv/bin/"),
 ]
 
 LIBRARY_PATHS = [
-    os.path.join(os.getcwd(), "./build/debug-gcc"),
-    os.path.join(os.getcwd(), "./build/release-gcc"),
-    os.path.join(os.getcwd(), "./build/debug-clang"),
-    os.path.join(os.getcwd(), "./build/release-clang"),
-
-    os.path.join(os.getcwd(), "./build/RelWithDebInfo"),
-    os.path.join(os.getcwd(), "./build/Release"),
-    os.path.join(os.getcwd(), "./build/Debug"),
-
-    os.path.join(os.getcwd(), "./dist/lib/"),
+    os.path.join(os.getcwd(), "./runtime/dist/lib/"),
 
     "/usr/lib/",
-    "/usr/lib/x86_64-linux-gnu/",
     "/usr/local/lib/",
-    '/usr/lib/llvm-5.0/lib',
-
-    'C:/Development/LLVM64/lib',
-    'C:/Development/LLVM/lib',
-    'C:/Program Files/ICU/lib64',
-    'C:/Program Files/ICU/lib',
 ]
 
-COMPILER = select_executable("bootstrap", paths=EXECUTABLE_PATHS)
+COMPILER = select_executable("orcinus", paths=EXECUTABLE_PATHS)
 ASSEMBLER = select_executable("llc", paths=EXECUTABLE_PATHS, hints=[
     "llc-6.0",
-    "llc-5.0",
 ])
-if os.name == 'nt':
-    VISUAL_STUDIO_PATHS = [
-        "C:/Program Files (x86)/Microsoft Visual Studio/2017/BuildTools/VC/Tools/MSVC/14.12.25827/bin/Hostx64/x64"
-    ]
-    LINKER = select_executable("link", paths=VISUAL_STUDIO_PATHS)
-else:
-    LINKER = 'g++'
+LINKER = 'g++'
 
-if os.name == 'nt':
-    LIBRARIES = [
-        'orcinus-runtime.lib',
-        'LLVMCore.lib',
-        "icuio.lib",
-        "icuuc.lib",
-    ]
-else:
-    LIBRARIES = [
-        'liborcinus-runtime.a',
-        'libLLVM-5.0.so',
-        "libicuio.a",
-        "libicuuc.a",
-        "libicudata.a",
-    ]
+LIBRARIES = [
+    'liborcinus-stdlib.a',
+    # 'libcord.a',
+    'libcoro.a',
+    'libgc.a',
+    'libuv_a.a',
+]
 
 
 def main():
     libraries = select_libraries(LIBRARIES, paths=LIBRARY_PATHS)
     if os.name != 'nt':
-        libraries.append("-ldl")
         libraries.append("-lpthread")
     link(list(map(compile, sys.argv[2:])), libraries, sys.argv[1])
 

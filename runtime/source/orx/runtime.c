@@ -28,12 +28,12 @@ typedef struct orx_arguments_t {
 static orx_processor_t* global_processor;
 
 void orx_initialize() {
-//    GC_enable_incremental();
-//    GC_INIT();
-//    GC_disable();
+    GC_enable_incremental();
+    GC_INIT();
+    GC_disable();
 }
 
-extern void orx_start(int64_t argc, const char** argv, orx_wire_func main_func) {
+void orx_start(int64_t argc, const char** argv, orx_wire_func main_func) {
     // initialize runtime
     orx_initialize();
 
@@ -55,7 +55,7 @@ extern void orx_start(int64_t argc, const char** argv, orx_wire_func main_func) 
     orx_processor_run(global_processor);
 }
 
-extern void orx_exit(int64_t code) {
+void orx_exit(int64_t code) {
     orx_processor_exit(global_processor, code);
     orx_processor_yield(global_processor);
 }

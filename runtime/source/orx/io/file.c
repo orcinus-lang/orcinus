@@ -18,6 +18,7 @@
 #include <orx/promise.h>
 #include <orx/runtime.h>
 #include <orx/types.h>
+#include <utf8.h>
 
 typedef struct orx_file_t {
     orx_type_t* type;
@@ -57,7 +58,7 @@ orx_file_t* orx_file_open(const orx_byte_t* path, const orx_byte_t* mode) {
     // start work
     struct uv_fs_s* request = orx_malloc(sizeof(struct uv_fs_s));
     request->data           = promise;
-    file->fd = uv_fs_open(uv_loop, request, (const char*) path, S_IRUSR | S_IWUSR, 0, __orx_on_file_open);
+    file->fd = uv_fs_open(uv_loop, request, utf8dup((const char*) path), S_IRUSR | S_IWUSR, 0, __orx_on_file_open);
 
     // Wait when promise fulfilled
     orx_promise_wait(promise);

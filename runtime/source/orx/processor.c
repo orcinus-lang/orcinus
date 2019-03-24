@@ -22,7 +22,7 @@
 typedef struct orx_processor_t {
     bool         is_executed;
     orx_int64_t  exit_code;
-    uv_loop_t    uv_loop;
+    uv_loop_t*   uv_loop;
     orx_wire_t*  current_wire;
     orx_wire_t*  work_wire;
     orx_wire_t** wires;
@@ -34,10 +34,8 @@ void orx_processor_main(void* ptr) {
     orx_processor_t* processor = (orx_processor_t*) ptr;
     orx_wire_t*      wire      = NULL;
 
-    uv_loop_init(&processor->uv_loop);
-
     while (orx_processor_is_executed(processor)) {
-        uv_run(&processor->uv_loop, UV_RUN_NOWAIT);
+        uv_run(processor->uv_loop, UV_RUN_NOWAIT);
 
         wire = orx_processor_pop(processor);
         if (wire) {
@@ -46,7 +44,7 @@ void orx_processor_main(void* ptr) {
     }
 
     // stop UV loop
-    uv_stop(&processor->uv_loop);
+    uv_stop(processor->uv_loop);
 
     // :( it worked, but it smells..
     fflush(stdout);
@@ -63,6 +61,9 @@ orx_processor_t* orx_processor_create() {
     processor->wire_count      = 0;
     processor->wire_capacity   = 8;
     processor->wires           = orx_malloc(sizeof(orx_wire_t*) * processor->wire_capacity);
+
+    processor->uv_loop = malloc(sizeof(uv_loop_t));
+    uv_loop_init(processor->uv_loop);
     return processor;
 }
 
@@ -72,7 +73,7 @@ void orx_processor_exit(orx_processor_t* processor, orx_int64_t code) {
 }
 
 bool orx_processor_is_executed(orx_processor_t* processor) {
-    return processor->is_executed && (processor->wire_count > 0 || uv_loop_alive(&processor->uv_loop));
+    return processor->is_executed && (processor->wire_count > 0 || uv_loop_alive(processor->uv_loop));
 }
 
 orx_wire_t* orx_processor_current_wire(orx_processor_t* processor) {
@@ -80,7 +81,7 @@ orx_wire_t* orx_processor_current_wire(orx_processor_t* processor) {
 }
 
 uv_loop_t* orx_processor_loop(orx_processor_t* processor) {
-    return &processor->uv_loop;
+    return processor->uv_loop;
 }
 
 void orx_processor_push(orx_processor_t* processor, orx_wire_t* wire) {

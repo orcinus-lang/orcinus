@@ -50,8 +50,8 @@ list (REMOVE_DUPLICATES ORX_SOURCE_FILES)
 # - cmake extensions
 include(ExternalProject)
 
-# - ICU library
-find_package(ICU REQUIRED "data" "uc" "io")
+## - ICU library
+#find_package(ICU REQUIRED "data" "uc" "io")
 
 ## - thread support
 #find_package(Threads)
@@ -65,14 +65,14 @@ add_subdirectory(${ORX_VENDORS_DIR}/libuv)
 
 # Create executable target
 set                       (ORX_MODULE orcinus-stdlib)
-add_library               (${ORX_MODULE} SHARED ${ORX_SOURCE_FILES})
+add_library               (${ORX_MODULE} STATIC ${ORX_SOURCE_FILES})
 set_target_properties     (${ORX_MODULE} PROPERTIES CLEAN_DIRECT_OUTPUT On)
 target_include_directories(${ORX_MODULE} PRIVATE ${ORX_SOURCE_DIR})
 target_include_directories(${ORX_MODULE} PRIVATE ${ICU_INCLUDE_DIRS})
-target_link_libraries     (${ORX_MODULE} ${ICU_LIBRARIES})
+#target_link_libraries     (${ORX_MODULE} ${ICU_LIBRARIES})
 target_link_libraries     (${ORX_MODULE} ${CORO_LIBRARIES})
 target_link_libraries     (${ORX_MODULE} ${UTF8_LIBRARIES})
 target_link_libraries     (${ORX_MODULE} ${GC_LIBRARIES})
 target_link_libraries     (${ORX_MODULE} ${UV_LIBRARIES})
 #target_link_libraries     (${ORX_MODULE} ${CMAKE_THREAD_LIBS_INIT})
-set_target_properties     (${ORX_MODULE} PROPERTIES COMPILE_FLAGS "-fsplit-stack")
+#set_target_properties     (${ORX_MODULE} PROPERTIES COMPILE_FLAGS "-fsplit-stack")

@@ -45,7 +45,7 @@ static void orx_wire_main(void* ptr) {
     orx_processor_yield(wire->processor); // TODO: Where go completed wire?
 }
 
-extern orx_wire_t* orx_wire_initial() {
+orx_wire_t* orx_wire_initial() {
     orx_wire_t* wire = orx_malloc(sizeof(orx_wire_t));
     coro_create(&wire->context, NULL, NULL, NULL, 0);
     wire->stack    = (orx_stack_t){NULL, 0, 0};
@@ -54,26 +54,30 @@ extern orx_wire_t* orx_wire_initial() {
     return wire;
 }
 
-extern orx_wire_t* orx_wire_create(orx_wire_func func, void* ptr) {
+orx_wire_t* orx_wire_create(orx_wire_func func, void* ptr) {
     orx_wire_t* wire    = orx_malloc(sizeof(orx_wire_t));
     wire->function      = func;
     wire->argument      = ptr;
-    wire->stack.size    = ORX_WIRE_INITIAL_STACK_SIZE;
-    wire->stack.pointer = orx_malloc(ORX_WIRE_INITIAL_STACK_SIZE);
-#if CORO_USE_VALGRIND
-    wire->stack.valgrind_id =
-        VALGRIND_STACK_REGISTER((char*) wire->stack.size, ((char*) wire->stack.size) + (size_t) wire->stack.pointer);
-#endif
+
+    struct coro_stack stack;
+    coro_stack_alloc(&coro_stack_alloc, ORX_WIRE_INITIAL_STACK_SIZE);
+
+
+//    wire->stack.size    = ORX_WIRE_INITIAL_STACK_SIZE;
+//    wire->stack.pointer = orx_malloc(ORX_WIRE_INITIAL_STACK_SIZE);
+//#if CORO_USE_VALGRIND
+//    wire->stack.valgrind_id = VALGRIND_STACK_REGISTER((char*) wire->stack.size, wire->stack.pointer + wire->stack.size);
+//#endif
 
     coro_create(&wire->context, orx_wire_main, wire, wire->stack.pointer, (size_t) wire->stack.size);
     return wire;
 }
 
 /// Register wire in processor
-extern void orx_wire_register(orx_wire_t* wire, orx_processor_t* processor) {
+void orx_wire_register(orx_wire_t* wire, orx_processor_t* processor) {
     wire->processor = processor;
 }
 
-extern void orx_wire_transfer(orx_wire_t* current_wire, orx_wire_t* next_wire) {
+void orx_wire_transfer(orx_wire_t* current_wire, orx_wire_t* next_wire) {
     coro_transfer(&current_wire->context, &next_wire->context);
 }

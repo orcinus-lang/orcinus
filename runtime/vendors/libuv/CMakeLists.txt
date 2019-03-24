@@ -21,7 +21,7 @@ add_dependencies(uv libuv)
 
 set(UV_LIBRARIES uv)
 set(UV_INCLUDE_DIRS "${source_dir}/include")
-set_property(TARGET uv PROPERTY IMPORTED_LOCATION "${install_dir}/lib/libuv.a")
+set_property(TARGET uv PROPERTY IMPORTED_LOCATION "${install_dir}/lib/libuv_a.so")
 
 set(UV_LIBRARIES    ${UV_LIBRARIES}    PARENT_SCOPE)
 set(UV_INSTALL_DIR  ${UV_INSTALL_DIR}  PARENT_SCOPE)

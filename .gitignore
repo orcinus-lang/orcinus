@@ -10,3 +10,5 @@ __pycache__/
 .hypothesis/
 .coverage
 htmlcov/
+build/
+dist/
