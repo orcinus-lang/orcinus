@@ -805,6 +805,7 @@ class ImportAnnotator(SemanticMixin, ImportVisitor[None]):
         member = module.get_member(name)
         if not member:
             return False
+        self.module.add_dependency(module)
         self.environment.define(alias or name, SemanticSymbol.from_symbol(self.environment, member))
         return True
 

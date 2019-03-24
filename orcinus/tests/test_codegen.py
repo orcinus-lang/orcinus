@@ -14,7 +14,8 @@ from typing import Optional, MutableSequence
 
 import pytest
 
-from orcinus.cli import compile_module
+from orcinus.compiler import compile_module, TargetID
+from orcinus.exceptions import OrcinusError
 from orcinus.tests import find_scripts
 
 OPT_EXECUTABLE = 'opt-6.0'
@@ -76,13 +77,16 @@ def get_build_options():
 
 def compile_and_execute(capsys, trace_filename, *, name, opt_level, arguments, input=None, is_trace=False):
     # orcinus - generate LLVM IR
-    result_code = compile_module(trace_filename)
+    try:
+        compile_module(trace_filename, target=TargetID.LLVM)
 
-    captured = capsys.readouterr()
-    if result_code:
-        return ScriptOutput(False, result_code, captured.out, captured.err, "")
-
-    assembly = captured.out.encode('utf-8')
+    except OrcinusError as ex:
+        print(ex, file=sys.stderr)
+        captured = capsys.readouterr()
+        return ScriptOutput(False, 0, captured.out, captured.err, "")
+    else:
+        captured = capsys.readouterr()
+        assembly = captured.out.encode('utf-8')
 
     args = [
         LLI_EXECUTABLE,

@@ -8,17 +8,16 @@ from __future__ import annotations
 import argparse
 import functools
 import logging
-import os
 import sys
 from typing import Optional
 
 from colorlog import ColoredFormatter
 
 from orcinus import __name__ as app_name, __version__ as app_version
-from orcinus.codegen import initialize_codegen, ModuleEmitter
+from orcinus.builder import build_package
+from orcinus.compiler import compile_module, TargetID
 from orcinus.diagnostics import Diagnostic, DiagnosticSeverity, DiagnosticManager
 from orcinus.exceptions import OrcinusError
-from orcinus.workspace import Workspace
 
 logger = logging.getLogger('orcinus')
 
@@ -113,22 +112,6 @@ def process_pdb(action):
     return wrapper
 
 
-def compile_module(filename: str) -> int:
-    # initialize workspace context
-    workspace = Workspace(paths=[os.getcwd()])
-    document = workspace.get_or_create_document(filename)
-    module = document.analyze()
-    error_code = exit_diagnostics(document.diagnostics)
-    if error_code is not None:
-        return error_code
-
-    initialize_codegen()
-    emitter = ModuleEmitter(module.name)
-    emitter.emit(module)
-    sys.stdout.write(str(emitter))
-    return 0
-
-
 def main():
     # initialize default logging
     initialize_logging()
@@ -142,10 +125,23 @@ def main():
     # create subparser
     subparsers = parser.add_subparsers()
 
-    # compile module
+    # compile single module
+    targets = [target for target in TargetID]
+    target_names = [target.name for target in TargetID]
+
     compile_cmd = subparsers.add_parser('compile')
     compile_cmd.add_argument('filename', type=str, help="input file")
+    compile_cmd.add_argument(
+        '--output', '-O', type=str, default='-', help="output result to file, use `-` for stdout")
+    compile_cmd.add_argument(
+        '--target', type=TargetID, choices=targets, metavar=target_names, default=TargetID.LLVM, help="result target")
     compile_cmd.add_argument(dest=KEY_ACTION, help=argparse.SUPPRESS, action='store_const', const=compile_module)
+
+    # build package or single module
+    build_cmd = subparsers.add_parser('build')
+    build_cmd.add_argument('path', type=str, default='.', help='package path or main module for anonymous package')
+    build_cmd.add_argument('--name', type=str, default='', help="output file name")
+    build_cmd.add_argument(dest=KEY_ACTION, help=argparse.SUPPRESS, action='store_const', const=build_package)
 
     # parse arguments
     kwargs = parser.parse_args().__dict__

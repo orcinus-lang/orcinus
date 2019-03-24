@@ -313,6 +313,8 @@ class Module(Named, Container):
         self.__declared_types.append(member)
 
     def add_dependency(self, module: Module):
+        if module in self.__dependencies:
+            return
         self.__dependencies.append(module)
 
 

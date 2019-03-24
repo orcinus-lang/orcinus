@@ -1,13 +1,13 @@
-#!/usr/bin/env python3.7
-# Copyright (C) 2017 Vasiliy Sheredeko
+#!/usr/bin/env python
+# Copyright (C) 2019 Vasiliy Sheredeko
 #
 # This software may be modified and distributed under the terms
 # of the MIT license.  See the LICENSE file for details.
+from __future__ import annotations
+
 import os
 import subprocess
 import sys
-
-OBJECT_EXTENSION = 'obj' if os.name == 'nt' else 'o'
 
 
 def select_executable(name, *, hints=None, paths=None):
@@ -69,19 +69,6 @@ def execute(*args, input=None):
     return stdout
 
 
-def compile(filename):
-    basename, _ = os.path.splitext(filename)
-    basename = os.path.relpath(basename, os.getcwd())
-
-    build_dir = os.path.join(os.getcwd(), "build/..orcinus/")
-    build_path = os.path.join(build_dir, f"{basename}.{OBJECT_EXTENSION}")
-    os.makedirs(os.path.dirname(build_path), exist_ok=True)
-
-    assembly = execute(COMPILER, 'compile', filename)
-    execute(ASSEMBLER, '-filetype=obj', '-relocation-model=pic', f'-o={build_path}', input=assembly)
-    return build_path
-
-
 def link(filenames, libraries, output):
     return execute(LINKER, *filenames, *libraries, "-fPIC", "-O0", "-g", "-ggdb", "-o", output)
 
@@ -111,13 +98,12 @@ LIBRARIES = [
     'libuv_a.a',
 ]
 
-
-def main():
-    libraries = select_libraries(LIBRARIES, paths=LIBRARY_PATHS)
-    if os.name != 'nt':
-        libraries.append("-lpthread")
-    link(list(map(compile, sys.argv[2:])), libraries, sys.argv[1])
-
-
-if __name__ == '__main__':
-    main()
+# def main():
+#     libraries = select_libraries(LIBRARIES, paths=LIBRARY_PATHS)
+#     if os.name != 'nt':
+#         libraries.append("-lpthread")
+#     link(list(map(compile, sys.argv[2:])), libraries, sys.argv[1])
+#
+#
+# if __name__ == '__main__':
+#     main()
