@@ -109,7 +109,7 @@ class ModuleEmitter:
             arg.name = param.name
 
         # function attributes
-        llvm_func.linkage = 'external' if func.is_abstract else 'internal'
+        llvm_func.linkage = 'external'
         if func.is_noreturn:
             llvm_func.attributes.add('noreturn')
 
@@ -154,6 +154,10 @@ class ModuleEmitter:
         emitter.emit()
 
     def emit_main(self, func: Function):
+        # fix main attributes
+        llvm_entry = self.llvm_functions[func]
+        llvm_entry.linkage = 'internal'
+
         # Create full blow function for main
         string_type = func.context.string_type
         arguments_type = ArrayType(func.module, string_type, location=func.location)
@@ -166,9 +170,9 @@ class ModuleEmitter:
         # __orx_main call
         llvm_builder = ir.IRBuilder(llvm_main.append_basic_block('entry'))
         if len(func.parameters) == 1:
-            llvm_result = llvm_builder.call(self.llvm_functions[func], [llvm_main.args[0]])
+            llvm_result = llvm_builder.call(llvm_entry, [llvm_main.args[0]])
         else:
-            llvm_result = llvm_builder.call(self.llvm_functions[func], [])
+            llvm_result = llvm_builder.call(llvm_entry, [])
 
         if isinstance(func.return_type, IntegerType):
             llvm_builder.call(self.llvm_exit, [llvm_result])

@@ -72,4 +72,5 @@ TODO
     - [ ] Speed up expression parsing, because is recursive-descent parser is not good choice fot this work
 - [ ] Language reference:    
     - [ ] Concepts for generics
-
+- [ ] Codegen
+    - [ ] Function with native attribute without name and not declared in C is saliently ignored by GCC linker   

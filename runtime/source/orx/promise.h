@@ -15,16 +15,20 @@
 
 #include <orx/types.h>
 
-typedef struct orx_result_t {
-    bool  is_error;
-    void* result;
-} orx_result_t;
+typedef struct orx_promise_t {
+    // public
+    bool  is_error; /// Error flag
+    void* result;   /// Result or error
 
-/// Create new promise
-orx_promise_t* orx_promise_create();
+    // private
+    orx_wire_t* wire; /// Waited wire
+} orx_promise_t;
+
+/// Initialize new promise
+void orx_promise_init(orx_promise_t* promise);
 
 /// Wait for promise result. E.g. current wire is transfer control to next scheduler wire.
-orx_result_t orx_promise_wait(orx_promise_t* promise);
+void orx_promise_wait(orx_promise_t* promise);
 
 /// Set error to promise and resume execution of waited wire
 void orx_promise_set_error(orx_promise_t* promise, void* error);

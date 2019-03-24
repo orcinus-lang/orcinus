@@ -17,29 +17,18 @@
 #include <orx/runtime.h>
 #include <orx/wire.h>
 
-typedef struct orx_promise_t {
-    orx_wire_t* wire;     /// Waited wire
-    bool        is_error; /// Error flag
-    void*       result;   /// Result or error
-} orx_promise_t;
-
-orx_promise_t* orx_promise_create() {
-    orx_promise_t* promise = orx_malloc(sizeof(orx_promise_t));
-    promise->wire          = NULL;
-    promise->is_error      = true;
-    promise->result        = NULL;
-    return promise;
+void orx_promise_init(orx_promise_t* promise) {
+    promise->wire     = NULL;
+    promise->is_error = true;
+    promise->result   = NULL;
 }
 
-orx_result_t orx_promise_wait(orx_promise_t* promise) {
+void orx_promise_wait(orx_promise_t* promise) {
     orx_processor_t* processor = orx_processor_current();
     promise->wire              = orx_processor_current_wire(processor);
 
     // yield control to another wire
     orx_processor_yield(processor);
-
-    // return result
-    return (orx_result_t){promise->is_error, promise->result};
 }
 
 void orx_promise_set_error(orx_promise_t* promise, void* error) {

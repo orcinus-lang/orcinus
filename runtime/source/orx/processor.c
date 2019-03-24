@@ -35,12 +35,14 @@ void orx_processor_main(void* ptr) {
     orx_wire_t*      wire      = NULL;
 
     while (orx_processor_is_executed(processor)) {
-        uv_run(processor->uv_loop, UV_RUN_NOWAIT);
-
+        // attempt to run wire
         wire = orx_processor_pop(processor);
         if (wire) {
             orx_processor_transfer(processor, wire);
         }
+
+        // check loop events
+        uv_run(processor->uv_loop, UV_RUN_NOWAIT);
     }
 
     // stop UV loop
@@ -107,7 +109,9 @@ void orx_processor_transfer(orx_processor_t* processor, orx_wire_t* wire) {
 }
 
 void orx_processor_yield(orx_processor_t* processor) {
-    orx_processor_transfer(processor, processor->work_wire);
+    if (processor->work_wire != processor->current_wire) {
+        orx_processor_transfer(processor, processor->work_wire);
+    }
 }
 
 void orx_processor_run(orx_processor_t* processor) {

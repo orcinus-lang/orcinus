@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.6
+#!/usr/bin/env python3.7
 # Copyright (C) 2017 Vasiliy Sheredeko
 #
 # This software may be modified and distributed under the terms

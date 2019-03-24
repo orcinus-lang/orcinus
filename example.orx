@@ -1,28 +1,12 @@
-# EXIT: 15
-# OUTPUT: before context
-# OUTPUT: call enter
-# OUTPUT: middle context
-# OUTPUT: call exit
-# OUTPUT: after context
-
-from system.io import print
-
-
-class FileIO:
-    @native('orx_file_open')
-    def __new__(path: str, mode: str) -> FileIO: ...
-
-    def __enter__(self) -> FileIO:
-        return self
-
-    def __exit__(self):
-        self.close()
-
-    @native('orx_file_close')
-    def close(self):...
+from system.io import open, print
 
 
 def main() -> int:
-    with FileIO('/tmp/example.ll', 'r') as stream:
-        pass
+    with open('/tmp/example.ll', 'r') as stream:
+        content = stream.read(-1)
+
+    with open('/tmp/output.ll', 'w') as stream:
+        stream.write(content)
+
+    print(content)
     return 0

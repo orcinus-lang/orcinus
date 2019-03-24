@@ -1,2 +1,42 @@
+
+
+# This class is represented text file IO
+class FileIO:
+    @native('orx_file_open')
+    def __new__(path: str, mode: str) -> FileIO: ...
+
+    def __enter__(self) -> FileIO:
+        return self
+
+    def __exit__(self):
+        self.close()
+
+    @native('orx_file_close')
+    def close(self):...
+
+    def flush(self):
+        # This is noop method, because `libuv` doesn't has method for flush buffer content.
+        pass
+
+    @native('orx_file_read')
+    def read(self, n: int = -1) -> str: ...
+
+#    @native('orx_file_seek')
+#    def seek(self, offset: int, whence: int = 0) -> int: ...
+#
+#    @native('orx_file_tell')
+#    def tell(self) -> int: ...
+#
+#    @native('orx_file_truncate')
+#    def truncate(self, size: int = None) -> int: ...
+
+    @native('orx_file_write')
+    def write(self, s: str) -> int: ...
+
+
 @native('orx_print')
 def print(value: str): ...
+
+
+@native('orx_file_open')
+def open(path: str, mode: str) -> FileIO: ...
