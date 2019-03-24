@@ -14,12 +14,11 @@ from typing import Optional, MutableSequence
 
 import pytest
 
-from orcinus.compiler import compile_module, TargetID
-from orcinus.exceptions import OrcinusError
+from orcinus.builder import build_package
+from orcinus.diagnostics import log_diagnostics
+from orcinus.exceptions import OrcinusError, DiagnosticError, DiagnosticCollectionError
 from orcinus.tests import find_scripts
 
-OPT_EXECUTABLE = 'opt-6.0'
-LLI_EXECUTABLE = 'lli-6.0'
 STRACEC_EXECUTABLE = 'strace'
 
 TEST_FIXTURES = sorted(s for s in find_scripts('./tests/codegen'))
@@ -52,7 +51,6 @@ class ScriptOutput:
     result_code: int
     output: str
     error: str
-    trace: str
 
 
 def execute(command, *, input=None, is_binary=False, is_error=False):
@@ -75,46 +73,44 @@ def get_build_options():
     ]
 
 
-def compile_and_execute(capsys, trace_filename, *, name, opt_level, arguments, input=None, is_trace=False):
+def compile_and_execute(capsys, filename, *, name, opt_level, arguments, input=None, is_trace=False):
     # orcinus - generate LLVM IR
     try:
-        compile_module(trace_filename, target=TargetID.LLVM)
-
+        output_name, _ = os.path.splitext(name)
+        output_path = build_package(filename, output_name)
+    except DiagnosticError as ex:
+        log_diagnostics([ex.args[0]])
+        captured = capsys.readouterr()
+        return ScriptOutput(False, 0, captured.out, captured.err)
+    except DiagnosticCollectionError as ex:
+        log_diagnostics(ex.args[0])
+        captured = capsys.readouterr()
+        return ScriptOutput(False, 0, captured.out, captured.err)
     except OrcinusError as ex:
         print(ex, file=sys.stderr)
         captured = capsys.readouterr()
-        return ScriptOutput(False, 0, captured.out, captured.err, "")
+        return ScriptOutput(False, 0, captured.out, captured.err)
     else:
         captured = capsys.readouterr()
         assembly = captured.out.encode('utf-8')
 
-    args = [
-        LLI_EXECUTABLE,
-        f'-O{opt_level}',
-        f'-fake-argv0={name}'
-    ]
-    args.extend(get_build_options())
-    args.extend(arguments)
-
+    args = []
+    trace_filename = None
     if is_trace:
         trace_filename = f'{tempfile.mktemp()}.strace'
         args = [
-                   STRACEC_EXECUTABLE,
-                   # trace children threads
-                   '-f',
-                   # output trace to file
-                   f'-o', trace_filename,
-               ] + args
-    else:
-        trace_filename = None
+            STRACEC_EXECUTABLE,
+            '-f',  # trace children threads
+            f'-o', trace_filename,  # output trace to file
+        ]
+    args.append(output_path)
 
-    stdtrace = ''
     result_code, stdout, stderr = execute(args, input=assembly)
-    if is_trace:
+    if trace_filename:
         with open(trace_filename, 'r', os.O_NONBLOCK) as stream:
             print(stream.read(), file=sys.stderr)
 
-    return ScriptOutput(True, result_code, stdout, stderr, '')
+    return ScriptOutput(True, result_code, stdout, stderr)
 
 
 def remove_startswith_and_strip(haystack: str, needle: str) -> str:

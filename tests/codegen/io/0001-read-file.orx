@@ -1,11 +1,11 @@
-# ERROR: 0
+# EXIT: 0
 # OUTPUT: Hello world!
 
 from system.io import open, print
 
 
 def main() -> int:
-    with open('.tests/files/0001-file-io.test', 'r') as stream:
+    with open('./tests/codegen/io/0001-read-file.orx', 'r') as stream:
         content = stream.read(-1)
     print(content)
     return 0

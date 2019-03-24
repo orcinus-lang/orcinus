@@ -9,15 +9,14 @@ import argparse
 import functools
 import logging
 import sys
-from typing import Optional
 
 from colorlog import ColoredFormatter
 
 from orcinus import __name__ as app_name, __version__ as app_version
 from orcinus.builder import build_package
 from orcinus.compiler import compile_module, TargetID
-from orcinus.diagnostics import Diagnostic, DiagnosticSeverity, DiagnosticManager
-from orcinus.exceptions import OrcinusError
+from orcinus.diagnostics import log_diagnostics
+from orcinus.exceptions import OrcinusError, DiagnosticError, DiagnosticCollectionError
 
 logger = logging.getLogger('orcinus')
 
@@ -27,23 +26,6 @@ DEFAULT_LEVEL = "warning"
 KEY_ACTION = '__action__'
 KEY_LEVEL = '__level__'
 KEY_PDB = '__pdb__'
-DIAGNOSTIC_LOGGERS = {
-    DiagnosticSeverity.Error: logger.error,
-    DiagnosticSeverity.Warning: logger.warning,
-    DiagnosticSeverity.Information: logger.info,
-    DiagnosticSeverity.Hint: logger.info,
-}
-
-
-def log_diagnostics(diagnostics: DiagnosticManager):
-    for diagnostic in diagnostics:  # type: Diagnostic
-        DIAGNOSTIC_LOGGERS.get(diagnostic.severity, logger.info)(diagnostic)
-
-
-def exit_diagnostics(diagnostics: DiagnosticManager) -> Optional[int]:
-    log_diagnostics(diagnostics)
-    if diagnostics.has_errors:
-        return 1
 
 
 def initialize_logging():
@@ -84,9 +66,15 @@ def process_errors(action):
     def wrapper(*args, **kwargs):
         try:
             return action(*args, **kwargs)
+        except DiagnosticError as ex:
+            log_diagnostics([ex.args[0]])
+            return 1
+        except DiagnosticCollectionError as ex:
+            log_diagnostics(ex.args[0])
+            return 1
         except OrcinusError as ex:
             logger.fatal(ex)
-            return 1
+            return 2
         except Exception as ex:
             logger.exception(ex)
             return 1

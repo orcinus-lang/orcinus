@@ -8,10 +8,13 @@ import dataclasses
 import enum
 import io
 import itertools
+import logging
 import os
 from typing import Sequence
 
 from orcinus.locations import Location
+
+logger = logging.getLogger('orcinus')
 
 
 # Enumeration contains diagnostic severities
@@ -189,3 +192,16 @@ def show_source_lines(location: Location, before: int = 2, after: int = 2, colum
             stream.write("\n")
 
     return stream.getvalue()
+
+
+DIAGNOSTIC_LOGGERS = {
+    DiagnosticSeverity.Error: logger.error,
+    DiagnosticSeverity.Warning: logger.warning,
+    DiagnosticSeverity.Information: logger.info,
+    DiagnosticSeverity.Hint: logger.info,
+}
+
+
+def log_diagnostics(diagnostics: Sequence[Diagnostic]):
+    for diagnostic in diagnostics:  # type: Diagnostic
+        DIAGNOSTIC_LOGGERS.get(diagnostic.severity, logger.info)(diagnostic)

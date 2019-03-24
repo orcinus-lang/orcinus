@@ -122,9 +122,10 @@ class Builder:
 
         result_path = os.path.relpath(output_path, os.getcwd())
         print(f'[x] Link {result_path}')
+        return output_path
 
 
-def build_package(path: str, name: str = "", paths: Sequence[str] = None):
+def build_package(path: str, name: str = "", paths: Sequence[str] = None) -> str:
     with Builder(paths or [os.getcwd()]) as builder:
         builder.build(path)
-        builder.link(name)
+        return builder.link(name)
