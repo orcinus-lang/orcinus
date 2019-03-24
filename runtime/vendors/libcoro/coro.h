@@ -179,7 +179,7 @@ extern "C" {
 /*
  * This is the type for the initialization function of a new coroutine.
  */
-typedef void (*coro_func)(void *);
+typedef void (*coro_func)(void*);
 
 /*
  * A coroutine state is saved in the following structure. Treat it as an
@@ -202,11 +202,11 @@ typedef struct coro_context coro_context;
  * This function is not reentrant, but putting a mutex around it
  * will work.
  */
-void coro_create (coro_context *ctx, /* an uninitialised coro_context */
-                  coro_func coro,    /* the coroutine code to be executed */
-                  void *arg,         /* a single pointer passed to the coro */
-                  void *sptr,        /* start of stack area */
-                  size_t ssze);      /* size of stack area in bytes */
+void coro_create(coro_context* ctx,  /* an uninitialised coro_context */
+                 coro_func     coro, /* the coroutine code to be executed */
+                 void*         arg,  /* a single pointer passed to the coro */
+                 void*         sptr, /* start of stack area */
+                 size_t        ssze);       /* size of stack area in bytes */
 
 /*
  * The following prototype defines the coroutine switching function. It is
@@ -254,7 +254,7 @@ void coro_destroy (coro_context *ctx);
  *    supported on the platform, then the feature will be silently disabled.
  */
 #ifndef CORO_STACKALLOC
-# define CORO_STACKALLOC 1
+#    define CORO_STACKALLOC 1
 #endif
 
 #if CORO_STACKALLOC
@@ -267,13 +267,12 @@ void coro_destroy (coro_context *ctx);
  * not actually do anything.
  */
 
-struct coro_stack
-{
-  void *sptr;
-  size_t ssze;
-#if CORO_USE_VALGRIND
-  int valgrind_id;
-#endif
+struct coro_stack {
+    void*  sptr;
+    size_t ssze;
+#    if CORO_USE_VALGRIND
+    int valgrind_id;
+#    endif
 };
 
 /*
@@ -286,14 +285,14 @@ struct coro_stack
  *
  * If size is 0, then a "suitable" stack size is chosen (usually 1-2MB).
  */
-int coro_stack_alloc (struct coro_stack *stack, unsigned int size);
+int coro_stack_alloc(struct coro_stack* stack, unsigned int size);
 
 /*
  * Free the stack allocated by coro_stack_alloc again. It is safe to
  * call this function on the coro_stack structure even if coro_stack_alloc
  * failed.
  */
-void coro_stack_free (struct coro_stack *stack);
+void coro_stack_free(struct coro_stack* stack);
 
 #endif
 
@@ -303,128 +302,125 @@ void coro_stack_free (struct coro_stack *stack);
 
 /*****************************************************************************/
 
-#if !defined CORO_LOSER      && !defined CORO_UCONTEXT \
-    && !defined CORO_SJLJ    && !defined CORO_LINUX \
-    && !defined CORO_IRIX    && !defined CORO_ASM \
-    && !defined CORO_PTHREAD && !defined CORO_FIBER
-# if defined WINDOWS && (defined __i386__ || (__x86_64__ || defined _M_IX86 || defined _M_AMD64))
-#  define CORO_ASM 1
-# elif defined WINDOWS || defined _WIN32
-#  define CORO_LOSER 1 /* you don't win with windoze */
-# elif __linux && (__i386__ || (__x86_64__ && !__ILP32__)) /*|| (__arm__ && __ARM_ARCH == 7)), not working */
-#  define CORO_ASM 1
-# elif defined HAVE_UCONTEXT_H
-#  define CORO_UCONTEXT 1
-# elif defined HAVE_SETJMP_H && defined HAVE_SIGALTSTACK
-#  define CORO_SJLJ 1
-# else
+#if !defined CORO_LOSER && !defined CORO_UCONTEXT && !defined CORO_SJLJ && !defined CORO_LINUX && \
+    !defined CORO_IRIX && !defined CORO_ASM && !defined CORO_PTHREAD && !defined CORO_FIBER
+#    if defined   WINDOWS && (defined __i386__ || (__x86_64__ || defined _M_IX86 || defined _M_AMD64))
+#        define CORO_ASM 1
+#    elif defined WINDOWS || defined _WIN32
+#        define CORO_LOSER 1                                  /* you don't win with windoze */
+#    elif __linux && (__i386__ || (__x86_64__ && !__ILP32__)) /*|| (__arm__ && __ARM_ARCH == 7)), not working */
+#        define CORO_ASM 1
+#    elif defined HAVE_UCONTEXT_H
+#        define CORO_UCONTEXT 1
+#    elif defined HAVE_SETJMP_H && defined HAVE_SIGALTSTACK
+#        define CORO_SJLJ 1
+#    else
 error unknown or unsupported architecture
-# endif
+#    endif
 #endif
 
 /*****************************************************************************/
 
 #if CORO_UCONTEXT
 
-# include <ucontext.h>
+#    include <ucontext.h>
 
-struct coro_context
-{
-  ucontext_t uc;
+struct coro_context {
+    ucontext_t uc;
 };
 
-# define coro_transfer(p,n) swapcontext (&((p)->uc), &((n)->uc))
-# define coro_destroy(ctx) (void *)(ctx)
+#    define coro_transfer(p, n) swapcontext(&((p)->uc), &((n)->uc))
+#    define coro_destroy(ctx) (void*) (ctx)
 
 #elif CORO_SJLJ || CORO_LOSER || CORO_LINUX || CORO_IRIX
 
-# if defined(CORO_LINUX) && !defined(_GNU_SOURCE)
-#  define _GNU_SOURCE /* for glibc */
-# endif
+#    if defined(CORO_LINUX) && !defined(_GNU_SOURCE)
+#        define _GNU_SOURCE /* for glibc */
+#    endif
 
 /* try to disable well-meant but buggy checks in some libcs */
-# ifdef _FORTIFY_SOURCE
-#  undef _FORTIFY_SOURCE
-#  undef __USE_FORTIFY_LEVEL /* helps some more when too much has been included already */
-# endif
+#    ifdef _FORTIFY_SOURCE
+#        undef _FORTIFY_SOURCE
+#        undef __USE_FORTIFY_LEVEL /* helps some more when too much has been included already */
+#    endif
 
-# if !CORO_LOSER
-#  include <unistd.h>
-# endif
+#    if !CORO_LOSER
+#        include <unistd.h>
+#    endif
 
 /* solaris is hopelessly borked, it expands _XOPEN_UNIX to nothing */
-# if __sun
-#  undef _XOPEN_UNIX
-#  define _XOPEN_UNIX 1
-# endif
+#    if __sun
+#        undef _XOPEN_UNIX
+#        define _XOPEN_UNIX 1
+#    endif
 
-# include <setjmp.h>
+#    include <setjmp.h>
 
-# if _XOPEN_UNIX > 0 || defined (_setjmp)
-#  define coro_jmp_buf      jmp_buf
-#  define coro_setjmp(env)  _setjmp (env)
-#  define coro_longjmp(env) _longjmp ((env), 1)
-# elif CORO_LOSER
-#  define coro_jmp_buf      jmp_buf
-#  define coro_setjmp(env)  setjmp (env)
-#  define coro_longjmp(env) longjmp ((env), 1)
-# else
-#  define coro_jmp_buf      sigjmp_buf
-#  define coro_setjmp(env)  sigsetjmp (env, 0)
-#  define coro_longjmp(env) siglongjmp ((env), 1)
-# endif
+#    if _XOPEN_UNIX > 0 || defined(_setjmp)
+#        define coro_jmp_buf jmp_buf
+#        define coro_setjmp(env) _setjmp(env)
+#        define coro_longjmp(env) _longjmp((env), 1)
+#    elif CORO_LOSER
+#        define coro_jmp_buf jmp_buf
+#        define coro_setjmp(env) setjmp(env)
+#        define coro_longjmp(env) longjmp((env), 1)
+#    else
+#        define coro_jmp_buf sigjmp_buf
+#        define coro_setjmp(env) sigsetjmp(env, 0)
+#        define coro_longjmp(env) siglongjmp((env), 1)
+#    endif
 
-struct coro_context
-{
-  coro_jmp_buf env;
+struct coro_context {
+    coro_jmp_buf env;
 };
 
-# define coro_transfer(p,n) do { if (!coro_setjmp ((p)->env)) coro_longjmp ((n)->env); } while (0)
-# define coro_destroy(ctx) (void *)(ctx)
+#    define coro_transfer(p, n)         \
+        do {                            \
+            if (!coro_setjmp((p)->env)) \
+                coro_longjmp((n)->env); \
+        } while (0)
+#    define coro_destroy(ctx) (void*) (ctx)
 
 #elif CORO_ASM
 
-struct coro_context
-{
-  void **sp; /* must be at offset 0 */
+struct coro_context {
+    void** sp; /* must be at offset 0 */
 };
 
-#if __i386__ || __x86_64__
-void __attribute__ ((__noinline__, __regparm__(2)))
-#else
-void __attribute__ ((__noinline__))
-#endif
-coro_transfer (coro_context *prev, coro_context *next);
+#    if __i386__ || __x86_64__
+void __attribute__((__noinline__, __regparm__(2)))
+#    else
+void __attribute__((__noinline__))
+#    endif
+coro_transfer(coro_context* prev, coro_context* next);
 
-# define coro_destroy(ctx) (void *)(ctx)
+#    define coro_destroy(ctx) (void*) (ctx)
 
 #elif CORO_PTHREAD
 
-# include <pthread.h>
+#    include <pthread.h>
 
 extern pthread_mutex_t coro_mutex;
 
-struct coro_context
-{
-  pthread_cond_t cv;
-  pthread_t id;
+struct coro_context {
+    pthread_cond_t cv;
+    pthread_t      id;
 };
 
-void coro_transfer (coro_context *prev, coro_context *next);
-void coro_destroy (coro_context *ctx);
+void coro_transfer(coro_context* prev, coro_context* next);
+void coro_destroy(coro_context* ctx);
 
 #elif CORO_FIBER
 
-struct coro_context
-{
-  void *fiber;
-  /* only used for initialisation */
-  coro_func coro;
-  void *arg;
+struct coro_context {
+    void* fiber;
+    /* only used for initialisation */
+    coro_func coro;
+    void*     arg;
 };
 
-void coro_transfer (coro_context *prev, coro_context *next);
-void coro_destroy (coro_context *ctx);
+void coro_transfer(coro_context* prev, coro_context* next);
+void coro_destroy(coro_context* ctx);
 
 #endif
 
@@ -433,4 +429,3 @@ void coro_destroy (coro_context *ctx);
 #endif
 
 #endif
-
