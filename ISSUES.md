@@ -1,5 +1,8 @@
+Known problems
+==============
+
 Exit with crash
-==========
+---------------
 
 At call `orx_exit` runtime is failed to successfully exit.
 
@@ -42,3 +45,10 @@ rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
 munmap(0x7f20945bd000, 2835200)         = 0
 +++ killed by SIGSEGV (core dumped) +++
 ```
+
+Warning: `Memory unmapping is disabled as incompatible with MPROTECT_VDB`
+-------------------------------------------------------------------------
+
+Caused by unknown call of mprotect.
+
+Fixed by disabled incremental GC

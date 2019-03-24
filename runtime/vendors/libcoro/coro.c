@@ -496,35 +496,36 @@ struct coro_init_args {
     coro_context *self, *main;
 };
 
-static pthread_t null_tid;
-
-/* I'd so love to cast pthread_mutex_unlock to void (*)(void *)... */
-static void mutex_unlock_wrapper(void* arg) {
-    pthread_mutex_unlock((pthread_mutex_t*) arg);
-}
-
 static void* coro_init(void* args_) {
     struct coro_init_args* args = (struct coro_init_args*) args_;
     coro_func              func = args->func;
     void*                  arg  = args->arg;
 
-    pthread_mutex_lock(&coro_mutex);
-
-    /* we try to be good citizens and use deferred cancellation and cleanup handlers */
-    pthread_cleanup_push(mutex_unlock_wrapper, &coro_mutex);
     coro_transfer(args->self, args->main);
     func(arg);
-    pthread_cleanup_pop(1);
 
     return 0;
 }
 
 void coro_transfer(coro_context* prev, coro_context* next) {
+    pthread_mutex_lock(&coro_mutex);
+
+    next->flags = 1;
     pthread_cond_signal(&next->cv);
-    pthread_cond_wait(&prev->cv, &coro_mutex);
-#    if __FreeBSD__ /* freebsd is of course broken and needs manual testcancel calls... yay... */
-    pthread_testcancel();
-#    endif
+
+    prev->flags = 0;
+
+    while (!prev->flags)
+        pthread_cond_wait(&prev->cv, &coro_mutex);
+
+    if (prev->flags == 2) {
+        pthread_mutex_unlock(&coro_mutex);
+        pthread_cond_destroy(&prev->cv);
+        pthread_detach(pthread_self());
+        pthread_exit(0);
+    }
+
+    pthread_mutex_unlock(&coro_mutex);
 }
 
 void coro_create(coro_context* ctx, coro_func coro, void* arg, void* sptr, size_t ssize) {
@@ -534,9 +535,7 @@ void coro_create(coro_context* ctx, coro_func coro, void* arg, void* sptr, size_
     if (!once) {
         once = 1;
 
-        pthread_mutex_lock(&coro_mutex);
         pthread_cond_init(&nctx.cv, 0);
-        null_tid = pthread_self();
     }
 
     pthread_cond_init(&ctx->cv, 0);
@@ -544,6 +543,7 @@ void coro_create(coro_context* ctx, coro_func coro, void* arg, void* sptr, size_
     if (coro) {
         pthread_attr_t        attr;
         struct coro_init_args args;
+        pthread_t             id;
 
         args.func = coro;
         args.arg  = arg;
@@ -561,22 +561,17 @@ void coro_create(coro_context* ctx, coro_func coro, void* arg, void* sptr, size_
         pthread_attr_setstack(&attr, sptr, (size_t) ssize);
 #    endif
         pthread_attr_setscope(&attr, PTHREAD_SCOPE_PROCESS);
-        pthread_create(&ctx->id, &attr, coro_init, &args);
+        pthread_create(&id, &attr, coro_init, &args);
 
         coro_transfer(args.main, args.self);
-    } else
-        ctx->id = null_tid;
+    }
 }
 
 void coro_destroy(coro_context* ctx) {
-    if (!pthread_equal(ctx->id, null_tid)) {
-        pthread_cancel(ctx->id);
-        pthread_mutex_unlock(&coro_mutex);
-        pthread_join(ctx->id, 0);
-        pthread_mutex_lock(&coro_mutex);
-    }
-
-    pthread_cond_destroy(&ctx->cv);
+    pthread_mutex_lock(&coro_mutex);
+    ctx->flags = 2;
+    pthread_cond_signal(&ctx->cv);
+    pthread_mutex_unlock(&coro_mutex);
 }
 
 /*****************************************************************************/

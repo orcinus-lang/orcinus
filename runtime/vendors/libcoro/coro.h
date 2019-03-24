@@ -87,6 +87,11 @@
  *            as it was reported to crash.
  * 2016-11-18 disable cfi_undefined again - backtraces might be worse, but
  *            compile compatibility is improved.
+ * 2018-08-14 use a completely different pthread strategy that should allow
+ *            sharing of coroutines among different threads. this would
+ *            undefined behaviour before as mutexes would be unlocked on
+ *            a different thread. overall, this might be slower than
+ *            using a pipe for synchronisation, but pipes eat fd's...
  */
 
 #ifndef CORO_H
@@ -304,11 +309,11 @@ void coro_stack_free(struct coro_stack* stack);
 
 #if !defined CORO_LOSER && !defined CORO_UCONTEXT && !defined CORO_SJLJ && !defined CORO_LINUX && \
     !defined CORO_IRIX && !defined CORO_ASM && !defined CORO_PTHREAD && !defined CORO_FIBER
-#    if defined   WINDOWS && (defined __i386__ || (__x86_64__ || defined _M_IX86 || defined _M_AMD64))
+#    if defined   WINDOWS && (defined __i386__ || (__x86_64__ || defined _M_IX86 || defined _M_AMD64)
 #        define CORO_ASM 1
 #    elif defined WINDOWS || defined _WIN32
-#        define CORO_LOSER 1                                  /* you don't win with windoze */
-#    elif __linux && (__i386__ || (__x86_64__ && !__ILP32__)) /*|| (__arm__ && __ARM_ARCH == 7)), not working */
+#        define CORO_LOSER 1                                 /* you don't win with windoze */
+#    elif __linux && (__i386__ || (__x86_64__ && !__ILP32__) /*|| (__arm__ && __ARM_ARCH == 7)), not working */
 #        define CORO_ASM 1
 #    elif defined HAVE_UCONTEXT_H
 #        define CORO_UCONTEXT 1
@@ -403,8 +408,8 @@ coro_transfer(coro_context* prev, coro_context* next);
 extern pthread_mutex_t coro_mutex;
 
 struct coro_context {
+    int            flags;
     pthread_cond_t cv;
-    pthread_t      id;
 };
 
 void coro_transfer(coro_context* prev, coro_context* next);

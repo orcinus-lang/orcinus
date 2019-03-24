@@ -55,19 +55,16 @@ orx_wire_t* orx_wire_initial() {
 }
 
 orx_wire_t* orx_wire_create(orx_wire_func func, void* ptr) {
-    orx_wire_t* wire    = orx_malloc(sizeof(orx_wire_t));
-    wire->function      = func;
-    wire->argument      = ptr;
+    orx_wire_t* wire = orx_malloc(sizeof(orx_wire_t));
+    wire->function   = func;
+    wire->argument   = ptr;
 
-    struct coro_stack stack;
-    coro_stack_alloc(&coro_stack_alloc, ORX_WIRE_INITIAL_STACK_SIZE);
-
-
-//    wire->stack.size    = ORX_WIRE_INITIAL_STACK_SIZE;
-//    wire->stack.pointer = orx_malloc(ORX_WIRE_INITIAL_STACK_SIZE);
-//#if CORO_USE_VALGRIND
-//    wire->stack.valgrind_id = VALGRIND_STACK_REGISTER((char*) wire->stack.size, wire->stack.pointer + wire->stack.size);
-//#endif
+        wire->stack.size    = ORX_WIRE_INITIAL_STACK_SIZE;
+        wire->stack.pointer = orx_malloc(ORX_WIRE_INITIAL_STACK_SIZE);
+    #if CORO_USE_VALGRIND
+        wire->stack.valgrind_id = VALGRIND_STACK_REGISTER((char*) wire->stack.size, wire->stack.pointer +
+        wire->stack.size);
+    #endif
 
     coro_create(&wire->context, orx_wire_main, wire, wire->stack.pointer, (size_t) wire->stack.size);
     return wire;

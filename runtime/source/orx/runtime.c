@@ -28,9 +28,8 @@ typedef struct orx_arguments_t {
 static orx_processor_t* global_processor;
 
 void orx_initialize() {
-    GC_enable_incremental();
+//    GC_enable_incremental(); // < FAILED to work with wire stack
     GC_INIT();
-    GC_disable();
 }
 
 void orx_start(int64_t argc, const char** argv, orx_wire_func main_func) {

@@ -17,6 +17,7 @@ ExternalProject_Add(
                                                 --enable-thread-local-alloc
                                                 --enable-parallel-mark
                                                 --enable-gc-assertions
+                                                --enable-mmap
                                                 > ${ORX_CMAKE_DIR}/libgc-configure.log 2>&1
     BUILD_COMMAND make > ${ORX_CMAKE_DIR}/libgc-build.log 2>&1
     INSTALL_DIR ${ORX_DIST_DIR}
