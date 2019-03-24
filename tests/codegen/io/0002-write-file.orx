@@ -1,0 +1,17 @@
+# EXIT: 0
+# OUTPUT: Hello world!
+# WARNING: Replace `/tmp` with OS temp directory
+# WARNING: Use default arguments of `stream.read`
+
+
+from system.io import open, print
+
+
+def main() -> int:
+    with open('/tmp/0002-write-file', 'w') as stream:
+        stream.write('Hello world!')
+
+    with open('/tmp/0002-write-file', 'r') as stream:
+        print(stream.read(-1))
+
+    return 0
