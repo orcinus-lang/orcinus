@@ -1,0 +1,25 @@
+# EXIT: 0
+from tests.asserts import assert
+
+
+def main() -> int:
+    assert(False == False, "False == False")
+    assert(True == True, "True == True")
+    assert(True != False, "True != False")
+
+    assert(False & False == False, "False & False == False")
+    assert(True & False == False, "True & False == False")
+    assert(False & True == False, "False & True == False")
+    assert(True & True == True, "True & True == True")
+
+    assert(False | False == False, "False | False == False")
+    assert(True | False == True, "True | False == True")
+    assert(False | True == True, "False | True == True")
+    assert(True | True == True, "True | True == True")
+
+    assert(False ^ False == False, "False ^ False == False")
+    assert(True ^ False == True, "True ^ False == True")
+    assert(False ^ True == True, "False ^ True == True")
+    assert(True ^ True == False, "True ^ True == False")
+
+    return 0

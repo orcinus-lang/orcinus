@@ -1,4 +1,0 @@
-# EXIT: 1
-
-def main() -> int:
-    return +1

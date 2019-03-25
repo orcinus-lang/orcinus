@@ -349,6 +349,8 @@ class SemanticScope:
                 self.environment.diagnostics.error(symbol.location, "Duplicate symbol: ‘{name}’")
                 return
         self.__declared[name] = symbol
+        if name in self.__resolved:
+            del self.__resolved[name]   # delete cached version
 
     def resolve(self, name: str) -> Optional[SemanticSymbol]:
         if name not in self.__resolved:

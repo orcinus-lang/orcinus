@@ -1,4 +1,0 @@
-# EXIT: 255
-
-def main() -> int:
-    return -1
