@@ -107,7 +107,7 @@ class Builder:
             for future in completed:
                 self.futures.remove(future)
                 unit: TranslationUnit = future.result()
-                print(f'[x] Compile {unit.module_name}')
+                print(f'[\33[32m✔\33[39m] Compile {unit.module_name}')
 
                 for filename in unit.dependencies:
                     self.compile_module(filename)
@@ -121,7 +121,7 @@ class Builder:
         proctools.execute(proctools.LINKER, *self.objects, *libraries, "-fPIC", "-O0", "-g", "-ggdb", "-o", output_path)
 
         result_path = os.path.relpath(output_path, os.getcwd())
-        print(f'[x] Link {result_path}')
+        print(f'[\33[32m✔\33[39m] Link {result_path}')
         return output_path
 
 

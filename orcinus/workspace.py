@@ -47,6 +47,11 @@ class Workspace:
         if stdlib_path not in paths:
             paths.insert(0, stdlib_path)
 
+        # Test library path
+        stdtest_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../packages/stdtest'))
+        if stdtest_path not in paths:
+            paths.insert(0, stdtest_path)
+
         self.packages = [
             Package(self, os.path.abspath(urllib.parse.urlparse(path).path)) for path in paths
         ]

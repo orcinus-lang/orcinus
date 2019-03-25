@@ -1,0 +1,23 @@
+from system import exit
+from system.io import print
+
+
+# Check value. If true write success message, otherwise write failure messages and abort execution
+def assert(value: bool, message: str):
+    if value:
+        __assert_success(message)
+    else:
+        __assert_failure(message)
+
+# Write success message to stdout
+def __assert_success(message: str):
+    print("[\33[32m✔\33[39m] ", False)
+    print(message)
+
+
+# Write failure message to stdout and abort execution
+def __assert_failure(message: str):
+    print("[\33[31m✘\33[39m] ", False)
+    print(message)
+    print("Executed with errors.")
+    exit(1)

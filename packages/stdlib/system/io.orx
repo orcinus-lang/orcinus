@@ -34,8 +34,11 @@ class FileIO:
     def write(self, s: str) -> int: ...
 
 
+def print(value: str):
+    print(value, True)
+
 @native('orx_print')
-def print(value: str): ...
+def print(value: str, new_line: bool): ...
 
 
 @native('orx_file_open')

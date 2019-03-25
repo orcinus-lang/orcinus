@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 import abc
+import ast
 import contextlib
 import io
 import weakref
 from io import StringIO
-from typing import cast, Sequence, Optional, Set
+from typing import cast, Sequence, Optional, Set, Iterator
 
 from more_itertools import first
 
@@ -179,8 +180,11 @@ class Container(Symbol, abc.ABC):
         self.__members.append(symbol)
         self.on_add_member(self, symbol)
 
+    def get_members(self, name: str) -> Iterator[Child]:
+        return (member for member in self.members if member.name == name)
+
     def get_member(self, name: str) -> Optional[Child]:
-        return first((member for member in self.members if member.name == name), None)
+        return first(self.get_members(name), None)
 
 
 class ErrorSymbol(Container):
@@ -1024,6 +1028,8 @@ class StringConstant(Value):
 
     def __str__(self):
         value = self.value.replace('"', '\\"')
+        value = value.replace('\n', '\\n"')
+        value = value.replace('\t', '\\t"')
         return f'"{value}"'
 
     def as_val(self) -> str:

@@ -14,7 +14,7 @@
 #include <string.h>
 #include <utf8.h>
 #include <uv.h>
-#include <orx/io/file.h>
+#include <orx/modules/io/file.h>
 #include <orx/memory.h>
 #include <orx/processor.h>
 #include <orx/promise.h>

@@ -11,15 +11,14 @@
  *     strictly forbidden unless prior written permission is obtained from
  *     Vasiliy Sheredeko.
  ******************************************************************************/
-
-#include <stdint.h>
+#include <inttypes.h>
 #include <stdio.h>
-#include <utf8.h>
-#include "types.h"
+#include <string.h>
+#include <orx/types.h>
 
-void orx_print(const orx_byte_t* message, bool is_newline) {
-    fputs((const char*) message, stdout);
-    if (is_newline) {
-        fputs("\n", stdout);
-    }
+const char* orx_int64_str(orx_int64_t value) {
+    char buffer[100];
+    int  count    = sprintf(buffer, "%" PRId64, value);
+    buffer[count] = '\0';
+    return strdup(buffer); // TODO: Memory leak
 }

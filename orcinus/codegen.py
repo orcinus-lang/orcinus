@@ -65,6 +65,10 @@ class ModuleEmitter:
         llvm_void_ptr = ir.IntType(8).as_pointer()
         return ir.FunctionType(ir.VoidType(), [llvm_void_ptr])
 
+    @cached_property
+    def llvm_floor_double(self):
+        return self.get_runtime_function('llvm.floor.f64', ir.DoubleType(), [ir.DoubleType()])
+
     @property
     def is_normalize(self) -> bool:
         return self.__is_normalize
@@ -262,14 +266,13 @@ class FunctionEmitter:
             return ir.Constant.literal_struct([])
         elif isinstance(value, StringConstant):
             constant = ir.Constant.literal_array(
-                [ir.Constant(ir.IntType(8), ord(c)) for c in value.value] +
+                [ir.Constant(ir.IntType(8), c) for c in bytes(value.value, encoding='utf-8')] +
                 [ir.Constant(ir.IntType(8), 0)]
             )
             global_v = ir.GlobalVariable(self.llvm_module, constant.type, self.llvm_module.get_unique_name("string"))
             global_v.initializer = constant
+            global_v.linkage = 'internal'
             return global_v.bitcast(ir.IntType(8).as_pointer())
-
-            # return ir.Constant.literal_struct([])
         elif isinstance(value, Parameter):
             return self.llvm_parameters[value]
         elif isinstance(value, Instruction):
@@ -391,7 +394,7 @@ BuiltinEmitter = Callable[[FunctionEmitter, Sequence[ir.Value], str], ir.Value]
 class IntegerBuiltin:
     @staticmethod
     def emit_neg(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.neg(*arguments, name=name)
+        return emitter.llvm_builder.neg(*arguments, name=name or '')
 
     @staticmethod
     def emit_pos(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
@@ -399,93 +402,115 @@ class IntegerBuiltin:
 
     @staticmethod
     def emit_inv(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.not_(*arguments, name=name)
+        return emitter.llvm_builder.not_(*arguments, name=name or '')
 
     @staticmethod
     def emit_add(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.add(*arguments, name=name)
+        return emitter.llvm_builder.add(*arguments, name=name or '')
 
     @staticmethod
     def emit_sub(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.sub(*arguments, name=name)
+        return emitter.llvm_builder.sub(*arguments, name=name or '')
 
     @staticmethod
     def emit_mul(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.mul(*arguments, name=name)
+        return emitter.llvm_builder.mul(*arguments, name=name or '')
 
     @staticmethod
     def emit_and(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.and_(*arguments, name=name)
+        return emitter.llvm_builder.and_(*arguments, name=name or '')
 
     @staticmethod
     def emit_or(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.or_(*arguments, name=name)
+        return emitter.llvm_builder.or_(*arguments, name=name or '')
 
     @staticmethod
     def emit_xor(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.xor(*arguments, name=name)
+        return emitter.llvm_builder.xor(*arguments, name=name or '')
 
     @staticmethod
     def emit_eq(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.icmp_signed('==', *arguments, name=name)
+        return emitter.llvm_builder.icmp_signed('==', *arguments, name=name or '')
 
     @staticmethod
     def emit_ne(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.icmp_signed('!=', *arguments, name=name)
+        return emitter.llvm_builder.icmp_signed('!=', *arguments, name=name or '')
 
     @staticmethod
     def emit_lt(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.icmp_signed('<', *arguments, name=name)
+        return emitter.llvm_builder.icmp_signed('<', *arguments, name=name or '')
 
     @staticmethod
     def emit_le(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.icmp_signed('<=', *arguments, name=name)
+        return emitter.llvm_builder.icmp_signed('<=', *arguments, name=name or '')
 
     @staticmethod
     def emit_gt(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.icmp_signed('>', *arguments, name=name)
+        return emitter.llvm_builder.icmp_signed('>', *arguments, name=name or '')
 
     @staticmethod
     def emit_ge(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.icmp_signed('>=', *arguments, name=name)
+        return emitter.llvm_builder.icmp_signed('>=', *arguments, name=name or '')
+
+    @staticmethod
+    def emit_idiv(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        # Floor division
+        llvm_dbl1 = emitter.llvm_builder.sitofp(arguments[0], ir.DoubleType())
+        llvm_dbl2 = emitter.llvm_builder.sitofp(arguments[1], ir.DoubleType())
+        llvm_result = emitter.llvm_builder.fdiv(llvm_dbl1, llvm_dbl2)
+        llvm_result = emitter.llvm_builder.call(emitter.parent.llvm_floor_double, [llvm_result])
+        return emitter.llvm_builder.fptosi(llvm_result, arguments[0].type, name=name or '')
+
+    @staticmethod
+    def emit_imod(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        # Python style `%`, e.g. a mod b == a - b * a // b
+        llvm_div = IntegerBuiltin.emit_idiv(emitter, arguments)
+        llvm_mul = emitter.llvm_builder.mul(arguments[1], llvm_div)
+        return emitter.llvm_builder.sub(arguments[0], llvm_mul, name=name or '')
+
+    @staticmethod
+    def emit_div(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
+        lhr = emitter.llvm_builder.sitofp(arguments[0], ir.DoubleType())
+        rhr = emitter.llvm_builder.sitofp(arguments[1], ir.DoubleType())
+        return emitter.llvm_builder.fdiv(lhr, rhr, name=name or '')
 
 
 class BooleanBuiltins:
     @staticmethod
     def emit_not(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.not_(*arguments, name=name)
+        return emitter.llvm_builder.not_(*arguments, name=name or '')
 
     @staticmethod
     def emit_and(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.and_(*arguments, name=name)
+        return emitter.llvm_builder.and_(*arguments, name=name or '')
 
     @staticmethod
     def emit_or(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.or_(*arguments, name=name)
+        return emitter.llvm_builder.or_(*arguments, name=name or '')
 
     @staticmethod
     def emit_xor(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.xor(*arguments, name=name)
+        return emitter.llvm_builder.xor(*arguments, name=name or '')
 
     @staticmethod
     def emit_eq(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.icmp_signed('==', *arguments, name=name)
+        return emitter.llvm_builder.icmp_signed('==', *arguments, name=name or '')
 
     @staticmethod
     def emit_ne(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.icmp_signed('!=', *arguments, name=name)
+        return emitter.llvm_builder.icmp_signed('!=', *arguments, name=name or '')
 
 
 class ArrayBuiltins:
     @staticmethod
     def emit_len(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
-        return emitter.llvm_builder.extract_value(arguments[0], [0], name=name)
+        return emitter.llvm_builder.extract_value(arguments[0], [0], name=name or '')
 
     @staticmethod
     def emit_getitem(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
         llvm_array = emitter.llvm_builder.extract_value(arguments[0], [1])
         llvm_value = emitter.llvm_builder.gep(llvm_array, [arguments[1]])
-        return emitter.llvm_builder.load(llvm_value, name=name)
+        return emitter.llvm_builder.load(llvm_value, name=name or '')
 
     @staticmethod
     def emit_setitem(emitter: FunctionEmitter, arguments: Sequence[ir.Value], name: str = None) -> ir.Value:
@@ -502,6 +527,9 @@ INTEGER_BUILTINS = {
     '__add__': IntegerBuiltin.emit_add,
     '__sub__': IntegerBuiltin.emit_sub,
     '__mul__': IntegerBuiltin.emit_mul,
+    '__div__': IntegerBuiltin.emit_div,
+    '__floordiv__': IntegerBuiltin.emit_idiv,
+    '__mod__': IntegerBuiltin.emit_imod,
     '__and__': IntegerBuiltin.emit_and,
     '__or__': IntegerBuiltin.emit_or,
     '__xor__': IntegerBuiltin.emit_xor,

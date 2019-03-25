@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import abc
+import ast
 import enum
 import weakref
 from typing import Sequence, Iterator, Optional, Union, Iterable, TypeVar, Callable, Mapping, Generic
@@ -1769,8 +1770,12 @@ class StringExpressionNode(ExpressionNode):
         return self.token_string.location
 
     @property
+    def raw_value(self) -> str:
+        return self.token_string.value
+
+    @property
     def value(self) -> str:
-        return self.token_string.value[1:-1]
+        return ast.literal_eval(self.raw_value)
 
     @property
     def children(self) -> Sequence[SyntaxSymbol]:

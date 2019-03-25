@@ -285,7 +285,7 @@ class GlobalEnvironment(SemanticEnvironment):
 
     def __init__(self, model: SemanticModel):
         super(GlobalEnvironment, self).__init__(model)
-        self.__scope = SemanticScope()
+        self.__scope = SemanticScope(self)
 
     @property
     def scope(self) -> SemanticScope:
@@ -299,7 +299,7 @@ class StaticEnvironment(SemanticEnvironment):
         super().__init__(parent.model)
 
         self.__parent = weakref.ref(parent)
-        self.__scope = SemanticScope()
+        self.__scope = SemanticScope(self)
 
     @property
     def scope(self) -> SemanticScope:
@@ -315,9 +315,15 @@ class StaticEnvironment(SemanticEnvironment):
 
 
 class SemanticScope:
-    def __init__(self, parent: SemanticScope = None):
+    def __init__(self, environment: SemanticEnvironment, parent: SemanticScope = None):
         self.__parent: SemanticScope = parent
         self.__declared: MutableMapping[str, SemanticSymbol] = {}
+        self.__resolved: MutableMapping[str, SemanticSymbol] = {}
+        self.__environment = weakref.ref(environment)
+
+    @property
+    def environment(self) -> SemanticEnvironment:
+        return self.__environment()
 
     @property
     def parent(self) -> SemanticScope:
@@ -328,19 +334,42 @@ class SemanticScope:
 
     def define(self, name: str, symbol: SemanticSymbol):
         assert isinstance(symbol, SemanticSymbol)
+        if name in self.__declared:
+            existed_symbol = self.__declared[name]
+            if isinstance(symbol, SemanticFunction):
+                if isinstance(existed_symbol, SemanticFunction):
+                    symbol = SemanticOverload(
+                        self.environment, name, [symbol, existed_symbol], existed_symbol.location)
+                elif isinstance(existed_symbol, SemanticOverload):
+                    symbol = existed_symbol.merge(symbol)
+                else:
+                    self.environment.diagnostics.error(symbol.location, "Duplicate symbol: ‘{name}’")
+                    return
+            else:
+                self.environment.diagnostics.error(symbol.location, "Duplicate symbol: ‘{name}’")
+                return
         self.__declared[name] = symbol
 
     def resolve(self, name: str) -> Optional[SemanticSymbol]:
-        symbol = self.__declared.get(name)
-        if symbol:
-            return symbol
-        elif self.parent:
-            return self.parent.resolve(name)
+        if name not in self.__resolved:
+            symbol = self.__declared.get(name)
+            if symbol:
+                # found symbol in current scope
+                #       extend function/overload with parent scope
+                #       TODO: Propagate function from parent environment.
+                if self.parent and isinstance(symbol, (SemanticFunction, SemanticOverload)):
+                    parent_symbol = self.parent.resolve(name)
+                    if isinstance(parent_symbol, (SemanticFunction, SemanticOverload)):
+                        symbol.merge(parent_symbol)
+            elif self.parent:
+                symbol = self.parent.resolve(name)
+            self.__resolved[name] = symbol
+        return self.__resolved[name]
 
 
 class LocalScope(SemanticScope):
-    def __init__(self, enter_block: BasicBlock, parent: SemanticScope = None):
-        super(LocalScope, self).__init__(parent)
+    def __init__(self, environment: SemanticEnvironment, enter_block: BasicBlock, parent: SemanticScope = None):
+        super(LocalScope, self).__init__(environment, parent)
 
         self.enter_block = enter_block
         self.exit_block = enter_block
@@ -580,9 +609,55 @@ class SemanticFunction(SemanticSymbol):
 
 
 class SemanticOverload(SemanticSymbol):
+    def __init__(self,
+                 environment: SemanticEnvironment,
+                 name: str,
+                 functions: Sequence[SemanticFunction],
+                 location: Location):
+        super(SemanticOverload, self).__init__(environment)
+
+        self.__name = name
+        self.__location = location
+        self.__functions = list(functions)
+
     @property
-    def functions(self) -> Sequence[Function]:
+    def name(self) -> str:
+        return self.__name
+
+    @property
+    def location(self) -> Location:
+        return self.__location
+
+    @property
+    def functions(self) -> Sequence[SemanticFunction]:
         return self.__functions
+
+    def merge(self, symbol: SemanticSymbol) -> SemanticOverload:
+        if isinstance(symbol, SemanticFunction):
+            self.__functions.append(symbol)
+        elif isinstance(symbol, SemanticOverload):
+            self.__functions.extend(symbol.functions)
+        # TODO: Raise TypeError?
+        return self
+
+    def as_symbol(self, location: Location) -> Symbol:
+        self.diagnostics.error(location, f"Can not use overload ‘{self}’ as symbol")
+        return ErrorValue(self.environment.module, location)
+
+    def as_type(self, location: Location) -> Type:
+        self.diagnostics.error(location, f"Can not use overload ‘{self}’ as type")
+        return ErrorType(self.environment.module, location)
+
+    def as_value(self, location: Location) -> Value:
+        self.diagnostics.error(location, f"Can not use overload ‘{self}’ as value")
+        return ErrorValue(self.environment.module, location)
+
+    def instantiate(self, arguments: Sequence[Type], location: Location) -> SemanticSymbol:
+        self.diagnostics.error(location, f"Can instantiate overload ‘{self}’")
+        return self.functions[0]
+
+    def __str__(self) -> str:
+        return f'{self.name}(<overloaded>)'
 
 
 class SemanticValue(SemanticSymbol):
@@ -804,12 +879,15 @@ class EnvironmentAnnotator(SemanticMixin, NodeVisitor[SemanticEnvironment]):
 
 class ImportAnnotator(SemanticMixin, ImportVisitor[None]):
     def import_symbol(self, module: Module, name: str, alias: Optional[str] = None) -> bool:
-        member = module.get_member(name)
-        if not member:
-            return False
-        self.module.add_dependency(module)
-        self.environment.define(alias or name, SemanticSymbol.from_symbol(self.environment, member))
-        return True
+        members = module.get_members(name)
+        is_founded = False
+        for member in members:
+            is_founded = True
+            self.environment.define(alias or name, SemanticSymbol.from_symbol(self.environment, member))
+
+        if is_founded:
+            self.module.add_dependency(module)
+        return is_founded
 
     def import_all(self, module: Module):
         for name in {member.name for member in module.members}:
@@ -1220,7 +1298,7 @@ class FunctionResolver(SemanticMixin):
         if isinstance(symbol, SemanticFunction):
             self.candidates.append(symbol.function)
         elif isinstance(symbol, SemanticOverload):
-            self.candidates.extend(symbol.functions)
+            self.candidates.extend([symbol.function for symbol in symbol.functions])
 
     def add_type_functions(self, clazz: Type, name: str):
         functions = (member for member in clazz.members if isinstance(member, Function) and member.name == name)
@@ -1297,7 +1375,7 @@ class LocalEnvironment(SemanticEnvironment):
         self.__parent = weakref.ref(parent)
         self.__node = node
         self.__builder = IRBuilder(self.function.append_basic_block('entry'))
-        self.__scopes = [LocalScope(self.builder.block)]
+        self.__scopes = [LocalScope(self, self.builder.block)]
 
         for parameter in self.function.parameters:
             self.define(parameter.name, SemanticSymbol.from_symbol(self, parameter))
@@ -1332,7 +1410,7 @@ class LocalEnvironment(SemanticEnvironment):
 
     def push(self, block: BasicBlock = None) -> LocalScope:
         """ Create new scope inherited from current and push to stack """
-        scope = LocalScope(block or self.builder.block, self.scope)
+        scope = LocalScope(self, block or self.builder.block, self.scope)
         self.__scopes.append(scope)
         return scope
 
@@ -1360,7 +1438,7 @@ class LocalEnvironment(SemanticEnvironment):
     def emit_error_call(self, name, arguments=None, keywords=None, *, location: Location):
         arguments = (f"{arg.type}" for arg in arguments) if arguments else ()
         keywords = (f"{key}: {arg.type}" for key, arg in keywords.items()) if keywords else ()
-        arguments = '. '.join(itertools.chain(arguments, keywords))
+        arguments = ', '.join(itertools.chain(arguments, keywords))
         self.diagnostics.error(location, f"Not found function to call ‘{name}({arguments})’")
         return ErrorValue(self.module, location)
 
