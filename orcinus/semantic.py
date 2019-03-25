@@ -31,6 +31,8 @@ BINARY_NAMES = {
     BinaryID.Add: '__add__',
     BinaryID.Sub: '__sub__',
     BinaryID.Mul: '__mul__',
+    BinaryID.TrueDiv: '__div__',
+    BinaryID.FloorDiv: '__floordiv__',
     BinaryID.Mod: '__mod__',
     BinaryID.Pow: '__pow__',
     BinaryID.And: '__and__',
@@ -1775,7 +1777,7 @@ class ExpressionEmitter(FunctionMixin, ExpressionVisitor[Symbol]):
 
         name = UNARY_NAMES.get(node.opcode)
         if not name:
-            self.diagnostics.error(node.location, "Not implemented binary operator")
+            self.diagnostics.error(node.location, "Not implemented unary operator")
             return ErrorValue(self.module, node.location)
 
         return self.environment.emit_named_call(name, [argument], location=node.location)

@@ -100,6 +100,15 @@ def process_pdb(action):
     return wrapper
 
 
+def process_action(action):
+    @functools.wraps(action)
+    def wrapper(*args, **kwargs):
+        action(*args, **kwargs)
+        return 0
+
+    return wrapper
+
+
 def main():
     # initialize default logging
     initialize_logging()
@@ -140,6 +149,7 @@ def main():
     logger.setLevel(kwargs.pop(KEY_LEVEL, DEFAULT_LEVEL).upper())
 
     if action:
+        action = process_action(action)
         if is_pdb:  # enable pdb if required
             action = process_pdb(action)
         if not sys.gettrace():

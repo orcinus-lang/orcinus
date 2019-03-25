@@ -1,4 +1,6 @@
 # EXIT: 1
+from random import random
+
 def main() -> int:
     n = 345
 
