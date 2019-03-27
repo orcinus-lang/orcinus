@@ -21,6 +21,7 @@ install:
 
 before_script:
   - mkdir runtime/build && cd runtime/build && cmake .. && cd .. && cmake --build build --target all
+  - cd $TRAVIS_BUILD_DIR
 
 script:
   - pytest
