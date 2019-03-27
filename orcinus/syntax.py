@@ -1872,8 +1872,10 @@ class BinaryID(enum.IntEnum):
     Mod = enum.auto()
     Pow = enum.auto()
     And = enum.auto()
-    Or = enum.auto()
-    Xor = enum.auto()
+    BinaryOr = enum.auto()
+    BinaryXor = enum.auto()
+    LogicAnd = enum.auto()
+    LogicOr = enum.auto()
     LeftShift = enum.auto()
     RightShift = enum.auto()
 
@@ -1904,40 +1906,6 @@ class BinaryExpressionNode(ExpressionNode):
     @property
     def children(self) -> Sequence[SyntaxSymbol]:
         return make_sequence([self.left_argument, self.token_operator, self.right_argument])
-
-
-@enum.unique
-class LogicID(enum.IntEnum):
-    And = enum.auto()
-    Or = enum.auto()
-
-
-class LogicExpressionNode(ExpressionNode):
-    left_argument: ExpressionNode
-    token_operator: SyntaxToken
-    opcode: LogicID
-    right_argument: ExpressionNode
-
-    def __init__(self,
-                 context: SyntaxContext,
-                 left_argument: ExpressionNode,
-                 token_operator: SyntaxToken,
-                 opcode: LogicID,
-                 right_argument: ExpressionNode):
-        super(LogicExpressionNode, self).__init__(context)
-
-        self.left_argument = left_argument
-        self.opcode = opcode
-        self.token_operator = token_operator
-        self.right_argument = right_argument
-
-    @property
-    def location(self) -> Location:
-        return self.token_operator.location
-
-    @property
-    def children(self) -> Sequence[SyntaxSymbol]:
-        return [self.left_argument, self.token_operator, self.right_argument]
 
 
 class CompareExpressionNode(ExpressionNode):
@@ -2523,9 +2491,6 @@ class AbstractExpressionVisitor(Generic[R], abc.ABC):
     def visit_binary_expression(self, node: BinaryExpressionNode) -> R:
         return self.visit_expression(node)
 
-    def visit_logic_expression(self, node: LogicExpressionNode) -> R:
-        return self.visit_expression(node)
-
     def visit_compare_expression(self, node: CompareExpressionNode) -> R:
         return self.visit_expression(node)
 
@@ -2567,8 +2532,6 @@ class ExpressionVisitor(AbstractExpressionVisitor[R], abc.ABC):
             return self.visit_unary_expression(node)
         elif isinstance(node, BinaryExpressionNode):
             return self.visit_binary_expression(node)
-        elif isinstance(node, LogicExpressionNode):
-            return self.visit_logic_expression(node)
         elif isinstance(node, CompareExpressionNode):
             return self.visit_compare_expression(node)
         elif isinstance(node, ConditionExpressionNode):
@@ -2655,8 +2618,6 @@ class NodeVisitor(Generic[R],
             return self.visit_unary_expression(node)
         elif isinstance(node, BinaryExpressionNode):
             return self.visit_binary_expression(node)
-        elif isinstance(node, LogicExpressionNode):
-            return self.visit_logic_expression(node)
         elif isinstance(node, CompareExpressionNode):
             return self.visit_compare_expression(node)
         elif isinstance(node, ConditionExpressionNode):

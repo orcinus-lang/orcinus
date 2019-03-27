@@ -1,0 +1,19 @@
+# EXIT: 0
+from tests.asserts import assert
+
+
+def main() -> int:
+    assert((not True)  == False, "(not True) == False")
+    assert((not False) == True, "(not False) == True")
+
+    assert((False and False) == False, "(False and False) == False")
+    assert((False and True) == False, "(False and True) == False")
+    assert((True and False) == False, "(True and False) == False")
+    assert((True and True) == True, "(True and True) == True")
+
+    assert((False or False) == False, "(False or False) == False")
+    assert((False or True) == True, "(False or True) == True")
+    assert((True or False) == True, "(True or False) == True")
+    assert((True or True) == True, "(True or True) == True")
+
+    return 0

@@ -36,8 +36,8 @@ BINARY_NAMES = {
     BinaryID.Mod: '__mod__',
     BinaryID.Pow: '__pow__',
     BinaryID.And: '__and__',
-    BinaryID.Or: '__or__',
-    BinaryID.Xor: '__xor__',
+    BinaryID.BinaryOr: '__or__',
+    BinaryID.BinaryXor: '__xor__',
     BinaryID.LeftShift: '__lshift__',
     BinaryID.RightShift: '__rshift__',
 }
@@ -350,7 +350,7 @@ class SemanticScope:
                 return
         self.__declared[name] = symbol
         if name in self.__resolved:
-            del self.__resolved[name]   # delete cached version
+            del self.__resolved[name]  # delete cached version
 
     def resolve(self, name: str) -> Optional[SemanticSymbol]:
         if name not in self.__resolved:
@@ -1579,6 +1579,24 @@ class FunctionMixin(SemanticMixin):
 
         return scope
 
+    def find_common_type(self, *types: Type, location: Location) -> Type:
+        if len(types) == 1:
+            return types[0]
+
+        result = first(types, None)
+
+        is_founded = True
+        for second in types:
+            if result != second:
+                is_founded = False
+
+        if is_founded:
+            return result
+
+        arguments = ', '.join(f"‘{tp}’" for tp in types)
+        self.diagnostics.error(location, f"Not found common type between: {arguments}")
+        return ErrorType(self.module, location=location)
+
     def emit_boolean(self, value: Value, location: Location) -> Value:
         return self.environment.emit_boolean(value, location)
 
@@ -1852,9 +1870,62 @@ class ExpressionEmitter(FunctionMixin, ExpressionVisitor[Symbol]):
         # Unreachable
         return BooleanConstant(self.symbol_context, False, node.location)
 
-    def visit_unary_expression(self, node: UnaryExpressionNode) -> Symbol:
+    def visit_not_expression(self, node: UnaryExpressionNode) -> Symbol:
+        # The operator not yields True if its argument is false, False otherwise.
         argument = self.emit_expression(node.argument)
+        bool_argument = self.emit_boolean(argument, node.argument.location)
 
+        false_const = BooleanConstant(self.symbol_context, False, location=node.location)
+        return self.environment.emit_named_call('__eq__', [bool_argument, false_const], location=node.location)
+
+    def visit_and_expression(self, node: BinaryExpressionNode) -> Symbol:
+        # The expression x and y first evaluates x:
+        #   if x is false, its value is returned
+        #   otherwise, y is evaluated and the resulting value is returned.
+
+        # The expression x or y first evaluates x:
+        #   if x is true, its value is returned
+        #   otherwise, y is evaluated and the resulting value is returned.
+
+        # const argument
+        const_argument = BooleanConstant(self.symbol_context, node.opcode == BinaryID.LogicOr, location=node.location)
+        name = 'or' if node.opcode == BinaryID.LogicOr else 'and'
+
+        first_argument = self.emit_expression(node.left_argument)
+        bool_argument = self.emit_boolean(first_argument, node.left_argument.location)
+        condition = self.environment.emit_named_call('__eq__', [bool_argument, const_argument], location=node.location)
+
+        first_block = self.builder.append_basic_block(f'{name}.first')
+        second_block = self.builder.append_basic_block(f'{name}.second')
+
+        self.builder.cbranch(condition, first_block, second_block, location=node.location)
+
+        with self.builder.goto_block(second_block):
+            second_argument = self.emit_expression(node.right_argument)
+
+        # allocate variable
+        var_type = self.find_common_type(first_argument.type, second_argument.type, location=node.location)
+        with self.builder.goto_entry_block():
+            variable = self.builder.alloca(var_type, location=node.location)
+
+        # store variable
+        then_block = self.builder.append_basic_block(f'{name}.next')
+        with self.builder.goto_block(first_block):
+            self.builder.store(variable, first_argument, location=node.location)
+            self.builder.branch(then_block, location=node.location)
+        with self.builder.goto_block(second_block):
+            self.builder.store(variable, second_argument, location=node.location)
+            self.builder.branch(then_block, location=node.location)
+
+        self.builder.position_at_end(then_block)
+        return self.builder.load(variable, location=node.location)
+
+    def visit_unary_expression(self, node: UnaryExpressionNode) -> Symbol:
+        # extra case: logical not
+        if node.opcode == UnaryID.Not:
+            return self.visit_not_expression(node)
+
+        argument = self.emit_expression(node.argument)
         name = UNARY_NAMES.get(node.opcode)
         if not name:
             self.diagnostics.error(node.location, "Not implemented unary operator")
@@ -1863,6 +1934,9 @@ class ExpressionEmitter(FunctionMixin, ExpressionVisitor[Symbol]):
         return self.environment.emit_named_call(name, [argument], location=node.location)
 
     def visit_binary_expression(self, node: BinaryExpressionNode) -> Symbol:
+        if node.opcode in [BinaryID.LogicAnd, BinaryID.LogicOr]:
+            return self.visit_and_expression(node)
+
         left_argument = self.emit_expression(node.left_argument)
         right_argument = self.emit_expression(node.right_argument)
 

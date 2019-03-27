@@ -17,9 +17,17 @@
 #include <utf8.h>
 #include "types.h"
 
-void orx_print(const orx_byte_t* message, bool is_newline) {
-    fputs((const char*) message, stdout);
+void orx_print(const char* message, bool is_newline) {
+    fputs(message, stdout);
     if (is_newline) {
         fputs("\n", stdout);
     }
+}
+
+orx_int64_t orx_string_compare(const char* self, const char* other) {
+    return utf8cmp(self, other);
+}
+
+orx_int64_t orx_string_length(const char* self) {
+    return utf8len(self);
 }

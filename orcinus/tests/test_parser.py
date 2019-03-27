@@ -88,7 +88,7 @@ def test_parse_binary():
     assert isinstance(node, BinaryExpressionNode)
     assert isinstance(node.left_argument, IntegerExpressionNode)
     assert isinstance(node.right_argument, IntegerExpressionNode)
-    assert node.opcode == BinaryID.Or
+    assert node.opcode == BinaryID.BinaryOr
     assert node.token_operator.id == TokenID.VerticalLine
 
     _, node = parse_expression("1 & 1")
@@ -102,7 +102,7 @@ def test_parse_binary():
     assert isinstance(node, BinaryExpressionNode)
     assert isinstance(node.left_argument, IntegerExpressionNode)
     assert isinstance(node.right_argument, IntegerExpressionNode)
-    assert node.opcode == BinaryID.Xor
+    assert node.opcode == BinaryID.BinaryXor
     assert node.token_operator.id == TokenID.Circumflex
 
     _, node = parse_expression("1 << 1")
@@ -126,20 +126,18 @@ def test_parse_binary():
     assert node.opcode == BinaryID.Pow
     assert node.token_operator.id == TokenID.DoubleStar
 
-
-def test_parse_logical():
     _, node = parse_expression("1 and 1")
-    assert isinstance(node, LogicExpressionNode)
+    assert isinstance(node, BinaryExpressionNode)
     assert isinstance(node.left_argument, IntegerExpressionNode)
     assert isinstance(node.right_argument, IntegerExpressionNode)
-    assert node.opcode == LogicID.And
+    assert node.opcode == BinaryID.LogicAnd
     assert node.token_operator.id == TokenID.And
 
     _, node = parse_expression("1 or 1")
-    assert isinstance(node, LogicExpressionNode)
+    assert isinstance(node, BinaryExpressionNode)
     assert isinstance(node.left_argument, IntegerExpressionNode)
     assert isinstance(node.right_argument, IntegerExpressionNode)
-    assert node.opcode == LogicID.Or
+    assert node.opcode == BinaryID.LogicOr
     assert node.token_operator.id == TokenID.Or
 
 
@@ -299,7 +297,7 @@ def test_parse_augmented_assignment():
     assert isinstance(node, AugmentedAssignStatementNode)
     assert isinstance(node.target, NamedExpressionNode)
     assert isinstance(node.source, IntegerExpressionNode)
-    assert node.opcode == BinaryID.Or
+    assert node.opcode == BinaryID.BinaryOr
     assert node.token_operator.id == TokenID.VerticalLineEqual
 
     _, node = parse_statement("a &= 1")
@@ -313,7 +311,7 @@ def test_parse_augmented_assignment():
     assert isinstance(node, AugmentedAssignStatementNode)
     assert isinstance(node.target, NamedExpressionNode)
     assert isinstance(node.source, IntegerExpressionNode)
-    assert node.opcode == BinaryID.Xor
+    assert node.opcode == BinaryID.BinaryXor
     assert node.token_operator.id == TokenID.CircumflexEqual
 
     _, node = parse_statement("a <<= 1")

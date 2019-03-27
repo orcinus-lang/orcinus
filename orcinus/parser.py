@@ -109,8 +109,8 @@ BINARY_IDS: Mapping[TokenID, BinaryID] = {
     TokenID.Slash: BinaryID.TrueDiv,
     TokenID.DoubleSlash: BinaryID.FloorDiv,
     TokenID.Percent: BinaryID.Mod,
-    TokenID.VerticalLine: BinaryID.Or,
-    TokenID.Circumflex: BinaryID.Xor,
+    TokenID.VerticalLine: BinaryID.BinaryOr,
+    TokenID.Circumflex: BinaryID.BinaryXor,
     TokenID.Ampersand: BinaryID.And,
     TokenID.LeftShift: BinaryID.LeftShift,
     TokenID.RightShift: BinaryID.RightShift,
@@ -124,8 +124,8 @@ AUGMENTED_IDS: Mapping[TokenID, BinaryID] = {
     TokenID.SlashEqual: BinaryID.TrueDiv,
     TokenID.DoubleSlashEqual: BinaryID.FloorDiv,
     TokenID.PercentEqual: BinaryID.Mod,
-    TokenID.CircumflexEqual: BinaryID.Xor,
-    TokenID.VerticalLineEqual: BinaryID.Or,
+    TokenID.CircumflexEqual: BinaryID.BinaryXor,
+    TokenID.VerticalLineEqual: BinaryID.BinaryOr,
     TokenID.AmpersandEqual: BinaryID.And,
     TokenID.DoubleStarEqual: BinaryID.Pow,
     TokenID.LeftShiftEqual: BinaryID.LeftShift,
@@ -1338,7 +1338,7 @@ class Parser:
         while self.match(TokenID.Or):
             token_or = self.consume()
             right_operand = self.parse_logical_and_expression()
-            expression = LogicExpressionNode(self.context, expression, token_or, LogicID.Or, right_operand)
+            expression = BinaryExpressionNode(self.context, expression, token_or, BinaryID.LogicOr, right_operand)
         return expression
 
     def parse_logical_and_expression(self) -> ExpressionNode:
@@ -1351,7 +1351,7 @@ class Parser:
         while self.match(TokenID.And):
             token_and = self.consume()
             right_operand = self.parse_logical_not_expression()
-            expression = LogicExpressionNode(self.context, expression, token_and, LogicID.And, right_operand)
+            expression = BinaryExpressionNode(self.context, expression, token_and, BinaryID.LogicAnd, right_operand)
         return expression
 
     def parse_logical_not_expression(self) -> ExpressionNode:
