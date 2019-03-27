@@ -86,7 +86,7 @@ COMPILER = select_executable("orcinus", paths=EXECUTABLE_PATHS)
 ASSEMBLER = select_executable("llc", paths=EXECUTABLE_PATHS, hints=[
     "llc-6.0",
 ])
-LINKER = 'g++'
+LINKER = select_executable("g++", paths=EXECUTABLE_PATHS)
 
 LIBRARIES = [
     'liborcinus-stdlib.a',

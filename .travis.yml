@@ -16,4 +16,6 @@ addons:
       - llvm-6.0
 
 script:
+  - /usr/bin/llc-6.0 --version
+  - /usr/bin/g++ --version
   - pytest
