@@ -1,0 +1,19 @@
+dist: xenial
+language: python
+sudo: true
+python:
+  - "3.7"
+
+install:
+  - pip install -e .[tests]
+
+addons:
+  apt:
+    sources:
+      - llvm-toolchain-xenial-6.0
+      - ubuntu-toolchain-r-test
+    packages:
+      - llvm-6.0
+
+script:
+  - pytest

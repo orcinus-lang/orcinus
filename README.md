@@ -14,13 +14,15 @@ pip install orcinus
 Usage
 -----
 
-For compile source code to LLVM IR use next command:
+For compile source code to native executable use next command:
 
 ```bash
-orcinus build example.orx  
+orcinus build [<dir-or-file>]  
 ```
+
+Where `dir-or-file` must be single file contain module, or directory contains package modules 
 
 Examples
 --------
 
-View scripts in directory `tests`.
+View scripts in directory `tests/codegen`.

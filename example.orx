@@ -1,18 +1,22 @@
 # EXIT: 1
-from tests.asserts import assert
 
 
-def check_divmod(x: int, y: int, d: int, m: int) -> bool:
-    rd: int = x // y
-    rm: int = x % y
+class A:
+    a: int
 
-    return (d == rd) & (m == rm) & (x == (rd) * y + (rm))
+    def __init__(self, a: int):
+        self.a = a
+
+
+class B(A):
+    b: int
+
+    def __init__(self, a: int, b: int):
+        self.a = a
+        self.b = b
 
 
 def main() -> int:
-    assert(check_divmod(15, 4, 3, 3),    'divmod(15, 4) == (3, 3)')
-    assert(check_divmod(-17, 4, -5, 3),  'divmod(-17, 4) == (-5, 3)')
-    assert(check_divmod(15, -6, -3, -3), 'divmod(15, -6) == (-3, -3)')
-    assert(check_divmod(-11, -7, 1, -4), 'divmod(-11, -7) == (1, -4)')
+    a = B(10, 10)
 
-    return 0
+    return a.a + a.b

@@ -1,0 +1,22 @@
+site_name: Orcinus
+nav:
+  - Home: index.md
+  - Language reference: reference.md
+theme: material
+repo_url: https://github.com/orcinus-lang/orcinus
+edit_uri: edit/master/docs/
+copyright: Copyright © 2019 Vasiliy Sheredeko
+google_analytics: ['UA-107333023-1', 'orcinus-lang.org']
+site_dir: "dist/website"
+markdown_extensions:
+  - markdown.extensions.codehilite:
+      linenums: true
+      guess_lang: false
+  - markdown.extensions.tables
+  - markdown.extensions.footnotes:
+      UNIQUE_IDS: true
+  - markdown.extensions.toc:
+      permalink: true
+      separator: "_"
+      baselevel: 1
+  - markdown_checklist.extension
