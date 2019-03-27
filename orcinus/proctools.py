@@ -9,6 +9,12 @@ import os
 import subprocess
 import sys
 
+from orcinus.exceptions import OrcinusError
+
+
+class ExecuteError(OrcinusError):
+    pass
+
 
 def select_executable(name, *, hints=None, paths=None):
     hints = hints or []
@@ -57,20 +63,12 @@ def select_libraries(filenames, *, paths):
 
 
 def execute(*args, input=None):
-    command = args[0]
     process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
     stdout, stderr = process.communicate(input)
     if process.returncode:
-        sys.stderr.write(f"Command {command} exited with error: {process.returncode}\n")
-        if stderr:
-            stderr = stderr.decode("utf-8")
-            sys.stderr.write(f"Error:\n{stderr}")
-        sys.exit(process.returncode)
+        stderr = stderr.decode("utf-8") if stderr else ''
+        raise ExecuteError(stderr)
     return stdout
-
-
-def link(filenames, libraries, output):
-    return execute(LINKER, *filenames, *libraries, "-fPIC", "-O0", "-g", "-ggdb", "-o", output)
 
 
 EXECUTABLE_PATHS = [
