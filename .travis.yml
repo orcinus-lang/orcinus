@@ -10,12 +10,17 @@ install:
 addons:
   apt:
     sources:
-      - llvm-toolchain-xenial-6.0
+      - llvm-toolchain-xenial-7
       - ubuntu-toolchain-r-test
     packages:
-      - llvm-6.0
+      - llvm-7
 
 script:
-  - /usr/bin/llc-6.0 --version
+  # Check versions
+  - /usr/bin/llc-7 --version
   - /usr/bin/g++ --version
+  # Build runtime library
+  - mkdir runtime/build && cd runtime/build && cmake ..
+  - cd runtime && cmake --build cmake-build-debug --target all
+  # Run pytest
   - pytest

@@ -5,6 +5,7 @@
 # of the MIT license.  See the LICENSE file for details.
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 import sys
@@ -31,13 +32,14 @@ def select_executable(name, *, hints=None, paths=None):
             if os.path.exists(filename):
                 return filename
 
-    sys.stderr.write(f"Not found executable {original}\n")
-    sys.stderr.write(f"Search paths:\n")
+    stream = io.StringIO()
+    stream.write(f"Not found executable {name}\n")
+    stream.write(f"Search paths:\n")
     for path in paths:
-        sys.stderr.write("  - ")
-        sys.stderr.write(path)
-        sys.stderr.write("\n")
-    sys.exit(-1)
+        stream.write("  - ")
+        stream.write(path)
+        stream.write("\n")
+    raise ExecuteError(stream.getvalue())
 
 
 def select_libraries(filenames, *, paths):
@@ -84,7 +86,7 @@ LIBRARY_PATHS = [
 
 COMPILER = select_executable("orcinus", paths=EXECUTABLE_PATHS)
 ASSEMBLER = select_executable("llc", paths=EXECUTABLE_PATHS, hints=[
-    "llc-6.0",
+    "llc-7",
 ])
 LINKER = select_executable("g++", paths=EXECUTABLE_PATHS)
 
