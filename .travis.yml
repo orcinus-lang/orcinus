@@ -4,9 +4,6 @@ sudo: true
 python:
   - "3.7"
 
-install:
-  - pip install -e .[tests]
-
 addons:
   apt:
     sources:
@@ -15,12 +12,15 @@ addons:
     packages:
       - llvm-7
 
-script:
-  # Check versions
+before_install:
   - /usr/bin/llc-7 --version
   - /usr/bin/g++ --version
-  # Build runtime library
-  - mkdir runtime/build && cd runtime/build && cmake ..
-  - cd runtime && cmake --build cmake-build-debug --target all
-  # Run pytest
+
+install:
+  - pip install -e .[tests]
+
+before_script:
+  - mkdir runtime/build && cd runtime/build && cmake .. && cd .. && cmake --build build --target all
+
+script:
   - pytest
