@@ -8,7 +8,7 @@
 # OUTPUT: Check `and-1`: second is called
 # OUTPUT: Check `and-2`: first called
 
-# WARNING: Must check order of output
+# WARNING: Must check order of output and the absence of `second is not called`
 
 from tests.asserts import assert
 from system.io import print
