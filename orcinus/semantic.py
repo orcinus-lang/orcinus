@@ -4,6 +4,7 @@
 # of the MIT license.  See the LICENSE file for details.
 from __future__ import annotations
 
+import dataclasses
 import heapq
 import itertools
 import logging
@@ -1368,6 +1369,27 @@ class FunctionResolver(SemanticMixin):
         return None
 
 
+@dataclasses.dataclass
+class LoopInfo:
+    """ This structure stored information about loop statement """
+    environment: LocalEnvironment
+    name: str
+    continue_block: BasicBlock
+    existed_break_block: Optional[BasicBlock] = None
+
+    @property
+    def break_block(self) -> BasicBlock:
+        if not self.existed_break_block:
+            self.existed_break_block = self.environment.builder.append_basic_block(f'{self.name}.break')
+        return self.existed_break_block
+
+
+@dataclasses.dataclass()
+class TryInfo:
+    """ This structure stored information about try statement """
+    environment: LocalEnvironment
+
+
 class LocalEnvironment(SemanticEnvironment):
     """ This environment is used for emitting symbols on function level """
 
@@ -1378,6 +1400,8 @@ class LocalEnvironment(SemanticEnvironment):
         self.__node = node
         self.__builder = IRBuilder(self.function.append_basic_block('entry'))
         self.__scopes = [LocalScope(self, self.builder.block)]
+        self.__loops = Deque[LoopInfo]()
+        self.__tries = Deque[TryInfo]()
 
         for parameter in self.function.parameters:
             self.define(parameter.name, SemanticSymbol.from_symbol(self, parameter))
@@ -1410,6 +1434,14 @@ class LocalEnvironment(SemanticEnvironment):
     def function(self) -> Function:
         return self.semantic_function.function
 
+    @property
+    def loops(self) -> Sequence[LoopInfo]:
+        return self.__loops
+
+    @property
+    def tries(self) -> Sequence[TryInfo]:
+        return self.__tries
+
     def push(self, block: BasicBlock = None) -> LocalScope:
         """ Create new scope inherited from current and push to stack """
         scope = LocalScope(self, block or self.builder.block, self.scope)
@@ -1422,11 +1454,25 @@ class LocalEnvironment(SemanticEnvironment):
         return scope
 
     @contextlib.contextmanager
-    def usage(self, block: BasicBlock) -> LocalScope:
+    def with_scope(self, block: BasicBlock) -> LocalScope:
         scope = self.push(block)
         yield scope
         scope.exit_block = self.builder.block
         self.pop()
+
+    @contextlib.contextmanager
+    def with_loop(self, name: str, continue_block: BasicBlock) -> LoopInfo:
+        info = LoopInfo(self, name, continue_block)
+        self.__loops.append(info)
+        yield info
+        self.__loops.pop()
+
+    @contextlib.contextmanager
+    def with_try(self) -> TryInfo:
+        info = TryInfo(self)
+        self.__tries.append(info)
+        yield info
+        self.__tries.pop()
 
     def resolve(self, name: str) -> Optional[Symbol]:
         return super().resolve(name) or self.parent.resolve(name)
@@ -1542,6 +1588,14 @@ class FunctionMixin(SemanticMixin):
     def block(self) -> BasicBlock:
         return self.builder.block
 
+    @property
+    def loops(self) -> Sequence[LoopInfo]:
+        return self.environment.loops
+
+    @property
+    def tries(self) -> Sequence[TryInfo]:
+        return self.environment.tries
+
     def merge(self, scopes: Set[SemanticScope], location: Location) -> SemanticScope:
         """ Merge scopes in next scope """
         scope = self.environment.push()
@@ -1628,6 +1682,18 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
     def visit_pass_statement(self, node: PassStatementNode):
         pass
 
+    def visit_continue_statement(self, node: ContinueStatementNode):
+        if not self.loops:
+            return self.diagnostics.error(node.location, f"'continue' not properly in loop")
+
+        self.builder.branch(self.loops[-1].continue_block, location=node.location)
+
+    def visit_break_statement(self, node: BreakStatementNode) -> R:
+        if not self.loops:
+            return self.diagnostics.error(node.location, f"'break' outside loop")
+
+        self.builder.branch(self.loops[-1].break_block, location=node.location)
+
     def visit_return_statement(self, node: ReturnStatementNode):
         value = self.emit_expression(node.value) if node.value else None
         value = value or NoneConstant(self.symbol_context, node.location)
@@ -1647,7 +1713,7 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
 
         # then block and scope
         then_block = self.builder.append_basic_block('if.then')
-        with self.environment.usage(then_block) as then_scope:  # new scope
+        with self.environment.with_scope(then_block) as then_scope:  # new scope
             self.builder.position_at_end(then_block)
             self.emit_statement(node.then_statement)
             if not self.builder.is_terminated:
@@ -1656,7 +1722,7 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         # else block and scope
         if node.else_statement:
             else_block = self.builder.append_basic_block('if.else')
-            with self.environment.usage(else_block) as else_scope:  # new scope
+            with self.environment.with_scope(else_block) as else_scope:  # new scope
                 self.builder.position_at_end(else_block)
                 self.emit_statement(node.else_statement)
                 if not self.builder.is_terminated:
@@ -1708,25 +1774,26 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
 
         # then block and scope
         then_block = self.builder.append_basic_block('while.body')
-        with self.environment.usage(then_block) as then_scope:  # new scope
-            self.builder.position_at_end(then_block)
-            self.emit_statement(node.then_statement)
-            if not self.builder.is_terminated:
-                self.builder.branch(cond_block, location=node.location)
+        with self.environment.with_scope(then_block) as then_scope:  # new scope
+            with self.environment.with_loop('while', cond_block) as loop_info:
+                self.builder.position_at_end(then_block)
+                self.emit_statement(node.then_statement)
+                if not self.builder.is_terminated:
+                    self.builder.branch(cond_block, location=node.location)
 
         # else block and scope
         if node.else_statement:
             else_block = self.builder.append_basic_block('while.else')
-            with self.environment.usage(else_block) as else_scope:  # new scope
+            with self.environment.with_scope(else_block) as else_scope:  # new scope
                 self.builder.position_at_end(else_block)
                 self.emit_statement(node.else_statement)
                 if not self.builder.is_terminated:
                     continue_blocks.add(self.builder.block)
-            next_block = None
+            next_block = loop_info.existed_break_block
 
         # begin scope
         else:
-            else_block = self.builder.append_basic_block('while.next')
+            else_block = loop_info.break_block
             next_block = else_block
             else_scope = begin_scope
 
@@ -1739,7 +1806,7 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
             return
 
         if not next_block:
-            next_block = self.builder.append_basic_block('while.next')
+            next_block = self.builder.append_basic_block('while.break')
 
         for block in filter(None, continue_blocks):
             with self.builder.goto_block(block):
@@ -1776,6 +1843,13 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
         for context, location in reversed(contexts):
             self.environment.emit_named_call('__exit__', [context], location=location)
 
+    def visit_try_statement(self, node: TryStatementNode):
+        """ """
+        try_block = self.builder.append_basic_block('try')
+
+        if node.finally_statement:
+            pass
+
     def visit_variable_statement(self, node: VariableStatementNode):
         # allocate register for variable
         var_type = self.as_type(node.type)
@@ -1796,6 +1870,20 @@ class StatementEmitter(FunctionMixin, StatementVisitor[None]):
     def visit_assign_statement(self, node: AssignStatementNode):
         source = self.emit_expression(node.source)
         emitter = AssignmentEmitter(self.environment, source, node.location)
+        emitter.visit(node.target)
+
+    def visit_augmented_assign_statement(self, node: AugmentedAssignStatementNode):
+        target = self.emit_expression(node.target)
+        source = self.emit_expression(node.source)
+
+        name = BINARY_NAMES.get(node.opcode)
+        if not name:
+            self.diagnostics.error(node.location, "Not implemented binary operator")
+            result = ErrorValue(self.module, node.location)
+        else:
+            result = self.environment.emit_named_call(name, [target, source], location=node.location)
+
+        emitter = AssignmentEmitter(self.environment, result, node.location)
         emitter.visit(node.target)
 
 

@@ -461,13 +461,18 @@ class Parser:
     def parse_function(self, decorators=None) -> FunctionNode:
         # """
         # function:
-        #     decorators 'def' Name generic_parameters arguments [ -> type ] ':' '...'
+        #     decorators 'def' Name generic_parameters arguments [ 'throws' ] [ -> type ] ':' '...'
         # """
         token_def = self.consume(TokenID.Def)
         with self.recovery(TokenID.NewLine):
             token_name = self.consume(TokenID.Name)
             generic_parameters = self.parse_generic_parameters()
             parameters = self.parse_function_parameters()
+
+            token_throws = None
+            if self.match(TokenID.Name):
+                if self.current_token.value == 'throws':
+                    token_throws = self.consume()
 
             if self.match(TokenID.Then):
                 token_then = self.consume(TokenID.Then)
@@ -486,6 +491,7 @@ class Parser:
             token_name,
             generic_parameters,
             parameters,
+            token_throws,
             token_then,
             result_type,
             token_colon,

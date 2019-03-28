@@ -687,6 +687,7 @@ class FunctionNode(MemberNode):
     token_name: SyntaxToken
     generic_parameters: SyntaxCollection[GenericParameterNode]
     parameters: SyntaxCollection[ParameterNode]
+    token_throws: SyntaxToken
     token_then: SyntaxToken
     return_type: TypeNode
     token_colon: SyntaxToken
@@ -699,6 +700,7 @@ class FunctionNode(MemberNode):
                  token_name: SyntaxToken,
                  generic_parameters: SyntaxCollection[GenericParameterNode],
                  parameters: SyntaxCollection[ParameterNode],
+                 token_throws: SyntaxToken,
                  token_then: SyntaxToken,
                  return_type: TypeNode,
                  token_colon: SyntaxToken,
@@ -710,6 +712,7 @@ class FunctionNode(MemberNode):
         self.token_name = token_name
         self.generic_parameters = generic_parameters
         self.parameters = parameters
+        self.token_throws = token_throws
         self.token_then = token_then
         self.return_type = return_type
         self.token_colon = token_colon
@@ -731,6 +734,7 @@ class FunctionNode(MemberNode):
             self.token_name,
             self.generic_parameters,
             self.parameters,
+            self.token_throws,
             self.token_then,
             self.return_type,
             self.token_colon,
@@ -740,6 +744,10 @@ class FunctionNode(MemberNode):
     @property
     def is_abstract(self) -> bool:
         return isinstance(self.statement, EllipsisStatementNode)
+
+    @property
+    def is_throws(self) -> bool:
+        return bool(self.token_throws)
 
 
 class TypeDeclarationNode(MemberNode, abc.ABC):

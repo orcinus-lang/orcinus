@@ -95,3 +95,8 @@ class Array[T]:
     def __getitem__(self, idx: int) -> T: ...
 
     def __setitem__(self, idx: int, item: T): ...
+
+
+# Exception - base class for all exceptions
+class Exception:
+    pass

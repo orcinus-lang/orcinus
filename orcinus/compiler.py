@@ -9,11 +9,12 @@ import dataclasses
 import enum
 import os
 from _ast import Tuple
-from typing import Sequence
+from typing import Sequence, cast
 
 from orcinus import proctools
 from orcinus.codegen import initialize_codegen, ModuleEmitter
 from orcinus.exceptions import DiagnosticCollectionError
+from orcinus.symbols import Function
 from orcinus.utils import write_stream
 from orcinus.workspace import Workspace
 
